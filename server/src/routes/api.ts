@@ -31,6 +31,17 @@ function cleanRowsForSite(siteId: string, windowDays: number): { rows: SnapshotR
   return { rows: clean.slice(-windowDays), excludedInWindow };
 }
 
+/**
+ * % change vs the previous period, or null when there isn't enough history to compare
+ * fairly (a partial previous period -- e.g. picking "90 derniers jours" before 180 days
+ * of data have accumulated -- would otherwise produce a wildly misleading percentage).
+ */
+function pctChange(current: number, previous: number, previousPoints: unknown[], periodDays: number): number | null {
+  if (previousPoints.length < periodDays) return null;
+  if (previous <= 0) return null;
+  return (current - previous) / previous;
+}
+
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/health", async () => ({ ok: true }));
 
@@ -38,23 +49,32 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return getSites();
   });
 
-  app.get("/api/sites/summary", async () => {
+  // Presets shown in the UI period selector. An unrecognized/missing value falls
+  // back to 7 days (previous default behavior).
+  const VALID_PERIOD_DAYS = new Set([7, 30, 90, 365]);
+  function periodDaysFromQuery(days?: string): number {
+    const n = days ? Number(days) : 7;
+    return VALID_PERIOD_DAYS.has(n) ? n : 7;
+  }
+
+  app.get<{ Querystring: { days?: string } }>("/api/sites/summary", async (req) => {
+    const periodDays = periodDaysFromQuery(req.query.days);
     const sites = getSites();
     return sites.map((s) => {
-      const { rows, excludedInWindow } = cleanRowsForSite(s.id, 14);
+      const { rows, excludedInWindow } = cleanRowsForSite(s.id, periodDays * 2);
       const series = toDayPoints(rows);
-      const last7 = series.slice(-7);
-      const prev7 = series.slice(-14, -7);
+      const current = series.slice(-periodDays);
+      const previous = series.slice(-periodDays * 2, -periodDays);
       const sum = (pts: typeof series, pick: (p: (typeof series)[number]) => number) => pts.reduce((a, p) => a + pick(p), 0);
-      const sessions = sum(last7, (p) => p.sessions);
-      const prevSessions = sum(prev7, (p) => p.sessions);
-      const conversions = sum(last7, (p) => p.goalConversions);
+      const sessions = sum(current, (p) => p.sessions);
+      const prevSessions = sum(previous, (p) => p.sessions);
+      const conversions = sum(current, (p) => p.goalConversions);
       return {
         id: s.id,
         name: s.name,
         region: s.continent,
         sessionsLast7d: sessions,
-        sessionsChangePct: prevSessions > 0 ? (sessions - prevSessions) / prevSessions : null,
+        sessionsChangePct: pctChange(sessions, prevSessions, previous, periodDays),
         conversionsLast7d: conversions,
         conversionRateLast7d: sessions > 0 ? conversions / sessions : 0,
         excludedAnomalyDays: excludedInWindow,
@@ -62,7 +82,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/api/regions", async () => {
+  app.get<{ Querystring: { days?: string } }>("/api/regions", async (req) => {
+    const periodDays = periodDaysFromQuery(req.query.days);
     const sites = getSites();
     const byRegion = new Map<Continent, string[]>();
     for (const s of sites) {
@@ -75,22 +96,22 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const rows: SnapshotRow[][] = [];
       let excludedAnomalyDays = 0;
       for (const id of siteIds) {
-        const cleaned = cleanRowsForSite(id, 14);
+        const cleaned = cleanRowsForSite(id, periodDays * 2);
         rows.push(cleaned.rows);
         excludedAnomalyDays += cleaned.excludedInWindow;
       }
       const series = aggregateDayPoints(rows);
-      const last7 = series.slice(-7);
-      const prev7 = series.slice(-14, -7);
+      const current = series.slice(-periodDays);
+      const previous = series.slice(-periodDays * 2, -periodDays);
       const sum = (pts: typeof series, pick: (p: (typeof series)[number]) => number) => pts.reduce((a, p) => a + pick(p), 0);
-      const sessions = sum(last7, (p) => p.sessions);
-      const prevSessions = sum(prev7, (p) => p.sessions);
-      const conversions = sum(last7, (p) => p.goalConversions);
+      const sessions = sum(current, (p) => p.sessions);
+      const prevSessions = sum(previous, (p) => p.sessions);
+      const conversions = sum(current, (p) => p.goalConversions);
       result.push({
         region,
         siteCount: siteIds.length,
         sessionsLast7d: sessions,
-        sessionsChangePct: prevSessions > 0 ? (sessions - prevSessions) / prevSessions : null,
+        sessionsChangePct: pctChange(sessions, prevSessions, previous, periodDays),
         conversionsLast7d: conversions,
         conversionRateLast7d: sessions > 0 ? conversions / sessions : 0,
         excludedAnomalyDays,
@@ -100,33 +121,35 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return result;
   });
 
-  app.get("/api/overview", async () => {
+  app.get<{ Querystring: { days?: string } }>("/api/overview", async (req) => {
+    const periodDays = periodDaysFromQuery(req.query.days);
     const sites = getSites();
     const rows: SnapshotRow[][] = [];
     let excludedAnomalyDays = 0;
     for (const s of sites) {
-      const cleaned = cleanRowsForSite(s.id, 14);
+      const cleaned = cleanRowsForSite(s.id, periodDays * 2);
       rows.push(cleaned.rows);
       excludedAnomalyDays += cleaned.excludedInWindow;
     }
     const series = aggregateDayPoints(rows);
-    const last7 = series.slice(-7);
-    const prev7 = series.slice(-14, -7);
+    const current = series.slice(-periodDays);
+    const previous = series.slice(-periodDays * 2, -periodDays);
     const sum = (pts: typeof series, pick: (p: (typeof series)[number]) => number) => pts.reduce((a, p) => a + pick(p), 0);
-    const sessions = sum(last7, (p) => p.sessions);
-    const prevSessions = sum(prev7, (p) => p.sessions);
-    const conversions = sum(last7, (p) => p.goalConversions);
-    const prevConversions = sum(prev7, (p) => p.goalConversions);
+    const sessions = sum(current, (p) => p.sessions);
+    const prevSessions = sum(previous, (p) => p.sessions);
+    const conversions = sum(current, (p) => p.goalConversions);
+    const prevConversions = sum(previous, (p) => p.goalConversions);
     const conversionRate = sessions > 0 ? conversions / sessions : 0;
     const prevConversionRate = prevSessions > 0 ? prevConversions / prevSessions : 0;
     return {
+      periodDays,
       siteCount: sites.length,
       sessionsLast7d: sessions,
-      sessionsChangePct: prevSessions > 0 ? (sessions - prevSessions) / prevSessions : null,
+      sessionsChangePct: pctChange(sessions, prevSessions, previous, periodDays),
       conversionsLast7d: conversions,
-      conversionsChangePct: prevConversions > 0 ? (conversions - prevConversions) / prevConversions : null,
+      conversionsChangePct: pctChange(conversions, prevConversions, previous, periodDays),
       conversionRateLast7d: conversionRate,
-      conversionRateChangePct: prevConversionRate > 0 ? (conversionRate - prevConversionRate) / prevConversionRate : null,
+      conversionRateChangePct: pctChange(conversionRate, prevConversionRate, previous, periodDays),
       series,
       excludedAnomalyDays,
     };

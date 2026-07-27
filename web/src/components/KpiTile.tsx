@@ -5,6 +5,7 @@ export function KpiTile({
   value,
   deltaPct,
   deltaIsGoodWhenUp = true,
+  deltaLabel = "vs 7j précédents",
   note,
   noteTooltip,
 }: {
@@ -12,6 +13,8 @@ export function KpiTile({
   value: string;
   deltaPct: number | null;
   deltaIsGoodWhenUp?: boolean;
+  /** Comparison text next to the delta, e.g. "vs 30j précédents". */
+  deltaLabel?: string;
   /** Short caveat shown under the delta, e.g. "2 jours de pic trafic exclus". */
   note?: string;
   /** Longer explanation shown on hover/focus of the note. */
@@ -28,7 +31,7 @@ export function KpiTile({
     <div className="kpi-tile">
       <div className="kpi-label">{label}</div>
       <div className="kpi-value">{value}</div>
-      <div className={`kpi-delta ${deltaClass}`}>{formatPct(deltaPct)} vs 7j précédents</div>
+      <div className={`kpi-delta ${deltaClass}`}>{formatPct(deltaPct)} {deltaLabel}</div>
       {note && (
         <div className="kpi-note" title={noteTooltip} tabIndex={noteTooltip ? 0 : undefined}>
           {note}

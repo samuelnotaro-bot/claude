@@ -3,10 +3,12 @@ import { api, type SiteSummary, type DayPoint } from "../lib/api";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { formatCompactNumber, formatPct } from "../lib/format";
+import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 type SortKey = "name" | "region" | "sessionsLast7d" | "sessionsChangePct" | "conversionRateLast7d";
 
 export function Sites() {
+  const { days } = usePeriod();
   const [sites, setSites] = useState<SiteSummary[]>([]);
   const [selected, setSelected] = useState<SiteSummary | null>(null);
   const [series, setSeries] = useState<DayPoint[]>([]);
@@ -14,11 +16,11 @@ export function Sites() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   useEffect(() => {
-    api.sitesSummary().then((data) => {
+    api.sitesSummary(days).then((data) => {
       setSites(data);
-      if (data.length > 0) setSelected(data[0]);
+      setSelected((current) => (current && data.find((s) => s.id === current.id)) || data[0] || null);
     });
-  }, []);
+  }, [days]);
 
   useEffect(() => {
     if (!selected) return;
@@ -47,16 +49,16 @@ export function Sites() {
   return (
     <div>
       <div className="card">
-        <h2>Sites — dernière semaine</h2>
+        <h2>Sites — {days} derniers jours</h2>
         <table className="data-table">
           <thead>
             <tr>
               <th onClick={() => toggleSort("name")}>Site</th>
               <th onClick={() => toggleSort("region")}>Région</th>
-              <th onClick={() => toggleSort("sessionsLast7d")}>Sessions (7j)</th>
-              <th onClick={() => toggleSort("sessionsChangePct")}>Δ vs 7j préc.</th>
+              <th onClick={() => toggleSort("sessionsLast7d")}>Sessions ({days}j)</th>
+              <th onClick={() => toggleSort("sessionsChangePct")}>Δ {periodComparisonLabel(days)}</th>
               <th onClick={() => toggleSort("conversionRateLast7d")}>Taux de conversion</th>
-              <th title="Jours de pic trafic anormal exclus du calcul ci-dessus, sur les 30 derniers jours">Anomalies</th>
+              <th title={`Jours de pic trafic anormal exclus du calcul ci-dessus, sur les ${days} derniers jours`}>Anomalies</th>
             </tr>
           </thead>
           <tbody>

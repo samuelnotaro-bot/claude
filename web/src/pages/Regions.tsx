@@ -4,18 +4,20 @@ import { RegionBarChart } from "../components/RegionBarChart";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { formatCompactNumber, formatPct } from "../lib/format";
+import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 export function Regions() {
+  const { days } = usePeriod();
   const [regions, setRegions] = useState<RegionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [series, setSeries] = useState<DayPoint[]>([]);
 
   useEffect(() => {
-    api.regions().then((data) => {
+    api.regions(days).then((data) => {
       setRegions(data);
-      if (data.length > 0) setSelected(data[0].region);
+      setSelected((current) => (current && data.some((r) => r.region === current) ? current : data[0]?.region ?? null));
     });
-  }, []);
+  }, [days]);
 
   useEffect(() => {
     if (!selected) return;
@@ -25,7 +27,7 @@ export function Regions() {
   return (
     <div>
       <div className="card">
-        <h2>Sessions par région business (7 derniers jours)</h2>
+        <h2>Sessions par région business ({days} derniers jours)</h2>
         <RegionBarChart data={regions} />
       </div>
 
@@ -36,11 +38,11 @@ export function Regions() {
             <tr>
               <th>Région</th>
               <th>Sites</th>
-              <th>Sessions (7j)</th>
-              <th>Δ vs 7j préc.</th>
-              <th>Conversions (7j)</th>
+              <th>Sessions ({days}j)</th>
+              <th>Δ {periodComparisonLabel(days)}</th>
+              <th>Conversions ({days}j)</th>
               <th>Taux de conversion</th>
-              <th title="Jours de pic trafic anormal exclus du calcul ci-dessus, sur les 30 derniers jours">Anomalies</th>
+              <th title={`Jours de pic trafic anormal exclus du calcul ci-dessus, sur les ${days} derniers jours`}>Anomalies</th>
             </tr>
           </thead>
           <tbody>

@@ -37,7 +37,10 @@ export interface DayPoint {
   isAnomaly?: boolean;
 }
 
+export type PeriodDays = 7 | 30 | 90 | 365;
+
 export interface Overview {
+  periodDays: PeriodDays;
   siteCount: number;
   sessionsLast7d: number;
   sessionsChangePct: number | null;
@@ -96,9 +99,9 @@ export interface Synthesis {
 
 export const api = {
   sites: () => get<Site[]>("/api/sites"),
-  sitesSummary: () => get<SiteSummary[]>("/api/sites/summary"),
-  regions: () => get<RegionSummary[]>("/api/regions"),
-  overview: () => get<Overview>("/api/overview"),
+  sitesSummary: (days: PeriodDays = 7) => get<SiteSummary[]>(`/api/sites/summary?days=${days}`),
+  regions: (days: PeriodDays = 7) => get<RegionSummary[]>(`/api/regions?days=${days}`),
+  overview: (days: PeriodDays = 7) => get<Overview>(`/api/overview?days=${days}`),
   series: (scope: "site" | "region" | "global", id?: string, days = 60) =>
     get<DayPoint[]>(`/api/series?scope=${scope}${id ? `&id=${encodeURIComponent(id)}` : ""}&days=${days}`),
   findings: (limit = 20) => get<Finding[]>(`/api/findings?limit=${limit}`),
