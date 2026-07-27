@@ -3,8 +3,14 @@ services:
     name: mkweb-piwik-pro-analyzer-v1
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm run start --workspace=server
+    # The TypeScript/Vite build runs here, in the startCommand, rather than in
+    # buildCommand: Render's deploy artifact upload strips anything matching
+    # .gitignore (including dist/, which is rightly gitignored generated output),
+    # so a dist/ produced during buildCommand never survives into the running
+    # instance. Building right before `node` runs guarantees dist/ exists where
+    # and when it's needed.
+    buildCommand: npm install
+    startCommand: npm run build && npm run start --workspace=server
     healthCheckPath: /api/health
     envVars:
       - key: PIWIK_MODE
