@@ -9,6 +9,7 @@ import { registerBasicAuth } from "./basicAuth.js";
 import { registerStaticWeb } from "./staticWeb.js";
 import { startScheduler } from "./scheduler.js";
 import { getLatestSynthesis } from "./repo.js";
+import { backfillAll } from "./backfill.js";
 
 const app = Fastify({ logger: true });
 
@@ -37,6 +38,11 @@ app.listen({ port: config.port, host: "0.0.0.0" }, (err, address) => {
   app.log.info(`Piwik Trends Analyzer API listening on ${address} (mode=${config.mode})`);
   startScheduler();
   if (!getLatestSynthesis()) {
-    app.log.warn("No synthesis found yet -- run `npm run backfill` (or `npm run seed:demo`) to populate history.");
+    // First boot on a fresh deploy (e.g. a new Render service): populate history in the
+    // background instead of requiring shell access to run `npm run backfill` manually.
+    // The server already accepts requests while this runs; pages just show empty data
+    // until it completes.
+    app.log.warn("Aucune donnée trouvée -- lancement automatique d'un backfill en arrière-plan.");
+    backfillAll().catch((err) => app.log.error({ err }, "Backfill automatique au démarrage échoué"));
   }
 });
