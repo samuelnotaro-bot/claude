@@ -40,8 +40,15 @@ export async function initSchema(): Promise<void> {
       channel_social INTEGER NOT NULL DEFAULT 0,
       channel_email INTEGER NOT NULL DEFAULT 0,
       channel_other INTEGER NOT NULL DEFAULT 0,
+      rfq_conversions INTEGER NOT NULL DEFAULT 0,
+      support_conversions INTEGER NOT NULL DEFAULT 0,
+      downloads INTEGER NOT NULL DEFAULT 0,
       UNIQUE (site_id, date)
     );
+    -- Progressive migration for databases created before these columns existed.
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS rfq_conversions INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS support_conversions INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS downloads INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS idx_snapshots_date ON site_snapshots (date);
     CREATE INDEX IF NOT EXISTS idx_snapshots_site ON site_snapshots (site_id);
 

@@ -61,7 +61,24 @@ export function Overview() {
           note={overview.excludedAnomalyDays > 0 ? anomalyNote(overview.excludedAnomalyDays) : undefined}
           noteTooltip={ANOMALY_TOOLTIP}
         />
-        <KpiTile label="Sites suivis" value={String(overview.siteCount)} deltaPct={null} />
+        <KpiTile
+          label={`Demandes de devis (${days}j)`}
+          value={formatCompactNumber(overview.rfqLast7d)}
+          deltaPct={overview.rfqChangePct}
+          deltaLabel={deltaLabel}
+        />
+        <KpiTile
+          label={`Demandes de support (${days}j)`}
+          value={formatCompactNumber(overview.supportLast7d)}
+          deltaPct={overview.supportChangePct}
+          deltaLabel={deltaLabel}
+        />
+        <KpiTile
+          label={`Téléchargements (${days}j)`}
+          value={formatCompactNumber(overview.downloadsLast7d)}
+          deltaPct={overview.downloadsChangePct}
+          deltaLabel={deltaLabel}
+        />
       </div>
 
       <div className="grid-2">

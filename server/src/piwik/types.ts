@@ -18,6 +18,12 @@ export interface DailySiteMetrics {
   bounceRate: number;
   avgSessionDurationSec: number;
   channels: Record<Channel, number>;
+  /** Conversions on goals classified as a quote/RFQ request (see goalCategories.ts). */
+  rfqConversions: number;
+  /** Conversions on goals classified as a technical support request (see goalCategories.ts). */
+  supportConversions: number;
+  /** File downloads (Resource Center, datasheets, ...), a dedicated Piwik Pro metric. */
+  downloads: number;
 }
 
 export interface CountryBreakdown {

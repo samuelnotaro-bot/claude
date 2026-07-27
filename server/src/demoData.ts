@@ -141,6 +141,11 @@ export function generateDemoMetrics(siteId: string, date: string, today: Date): 
   const goalConversions = Math.round(sessions * Math.max(0.001, convRateBase) * (0.9 + rng() * 0.2));
   const bounceRate = Math.min(0.85, Math.max(0.2, 0.45 + (rng() - 0.5) * 0.1));
   const avgSessionDurationSec = 90 + rng() * 120;
+  // Rough split matching the real Piwik Pro goal mix: quote requests and support
+  // requests are two of several goal types making up total goalConversions.
+  const rfqConversions = Math.round(goalConversions * (0.35 + rng() * 0.1));
+  const supportConversions = Math.round(goalConversions * (0.12 + rng() * 0.06));
+  const downloads = Math.round(sessions * (0.12 + rng() * 0.08));
 
   const totalWeight = Object.values(channelWeights).reduce((a, b) => a + b, 0);
   const channels = Object.fromEntries(
@@ -160,5 +165,8 @@ export function generateDemoMetrics(siteId: string, date: string, today: Date): 
     bounceRate,
     avgSessionDurationSec,
     channels,
+    rfqConversions,
+    supportConversions,
+    downloads,
   };
 }

@@ -48,6 +48,12 @@ export interface Overview {
   conversionsChangePct: number | null;
   conversionRateLast7d: number;
   conversionRateChangePct: number | null;
+  rfqLast7d: number;
+  rfqChangePct: number | null;
+  supportLast7d: number;
+  supportChangePct: number | null;
+  downloadsLast7d: number;
+  downloadsChangePct: number | null;
   series: DayPoint[];
   /** Days excluded from the KPIs above because they were flagged as a traffic-flood anomaly. */
   excludedAnomalyDays: number;

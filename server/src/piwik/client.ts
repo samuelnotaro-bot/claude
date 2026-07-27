@@ -1,5 +1,6 @@
 import { config } from "../config.js";
 import type { PiwikApp, DailySiteMetrics, CountryBreakdown, Channel } from "./types.js";
+import { categorizeGoal } from "../goalCategories.js";
 
 /**
  * Thin client for the Piwik Pro REST APIs (Management API v2 + Analytics Query API v1).
@@ -24,6 +25,8 @@ const COLUMN_IDS = {
   bounceRate: "bounce_rate",
   channelDimension: "medium",
   countryDimension: "location_country_name",
+  goalDimension: "goal_id",
+  downloads: "downloads",
 };
 
 // Real `medium` values observed on this organization's traffic; anything else
@@ -191,6 +194,33 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     channels[channel] += Number(row[COLUMN_IDS.sessions] ?? 0);
   }
 
+  // Goal names are configured per-site (see goalCategories.ts) -- classify by
+  // keyword rather than assuming goal ids/names line up across sites.
+  const goalRows = await queryAnalytics({
+    website_id: siteId,
+    date_from: date,
+    date_to: date,
+    columns: [{ column_id: COLUMN_IDS.goalDimension }, { column_id: COLUMN_IDS.goalConversions }],
+  });
+  let rfqConversions = 0;
+  let supportConversions = 0;
+  for (const row of goalRows) {
+    const value = row[COLUMN_IDS.goalDimension];
+    const goalName = Array.isArray(value) ? value[1] : null;
+    if (!goalName) continue;
+    const category = categorizeGoal(goalName);
+    const count = Number(row[COLUMN_IDS.goalConversions] ?? 0);
+    if (category === "rfq") rfqConversions += count;
+    else if (category === "support") supportConversions += count;
+  }
+
+  const [downloadsTotal] = await queryAnalytics({
+    website_id: siteId,
+    date_from: date,
+    date_to: date,
+    columns: [{ column_id: COLUMN_IDS.downloads }],
+  });
+
   return {
     siteId,
     date,
@@ -201,6 +231,9 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     bounceRate: Number(totals?.[COLUMN_IDS.bounceRate] ?? 0),
     avgSessionDurationSec: 0, // TODO: no valid column id found yet (see comment above)
     channels,
+    rfqConversions,
+    supportConversions,
+    downloads: Number(downloadsTotal?.[COLUMN_IDS.downloads] ?? 0),
   };
 }
 

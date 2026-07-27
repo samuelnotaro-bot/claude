@@ -57,8 +57,9 @@ export async function upsertSnapshot(m: DailySiteMetrics): Promise<void> {
   await pool.query(
     `INSERT INTO site_snapshots (
       site_id, date, sessions, users, pageviews, goal_conversions, bounce_rate, avg_session_duration_sec,
-      channel_organic, channel_direct, channel_referral, channel_paid, channel_social, channel_email, channel_other
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      channel_organic, channel_direct, channel_referral, channel_paid, channel_social, channel_email, channel_other,
+      rfq_conversions, support_conversions, downloads
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     ON CONFLICT (site_id, date) DO UPDATE SET
       sessions = excluded.sessions, users = excluded.users, pageviews = excluded.pageviews,
       goal_conversions = excluded.goal_conversions, bounce_rate = excluded.bounce_rate,
@@ -66,7 +67,9 @@ export async function upsertSnapshot(m: DailySiteMetrics): Promise<void> {
       channel_organic = excluded.channel_organic, channel_direct = excluded.channel_direct,
       channel_referral = excluded.channel_referral, channel_paid = excluded.channel_paid,
       channel_social = excluded.channel_social, channel_email = excluded.channel_email,
-      channel_other = excluded.channel_other`,
+      channel_other = excluded.channel_other,
+      rfq_conversions = excluded.rfq_conversions, support_conversions = excluded.support_conversions,
+      downloads = excluded.downloads`,
     [
       m.siteId,
       m.date,
@@ -83,6 +86,9 @@ export async function upsertSnapshot(m: DailySiteMetrics): Promise<void> {
       m.channels.social,
       m.channels.email,
       m.channels.other,
+      m.rfqConversions,
+      m.supportConversions,
+      m.downloads,
     ]
   );
 }
@@ -97,6 +103,9 @@ export interface SnapshotRow {
   bounceRate: number;
   avgSessionDurationSec: number;
   channels: { organic: number; direct: number; referral: number; paid: number; social: number; email: number; other: number };
+  rfqConversions: number;
+  supportConversions: number;
+  downloads: number;
 }
 
 export async function getSnapshots(dateFrom: string, dateTo: string): Promise<SnapshotRow[]> {
@@ -131,6 +140,9 @@ function rowToSnapshot(r: any): SnapshotRow {
       email: r.channel_email,
       other: r.channel_other,
     },
+    rfqConversions: r.rfq_conversions,
+    supportConversions: r.support_conversions,
+    downloads: r.downloads,
   };
 }
 

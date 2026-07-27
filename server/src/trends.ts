@@ -10,6 +10,9 @@ export interface DayPoint {
   conversionRate: number;
   bounceRate: number;
   channels: Record<Channel, number>;
+  rfqConversions: number;
+  supportConversions: number;
+  downloads: number;
   /** True when this day (or, for an aggregate point, at least one contributing site) was flagged as a traffic-flood anomaly. See anomaly.ts. */
   isAnomaly?: boolean;
 }
@@ -47,6 +50,9 @@ export function toDayPoints(rows: SnapshotRow[], anomalousDates?: Set<string>): 
     conversionRate: r.sessions > 0 ? r.goalConversions / r.sessions : 0,
     bounceRate: r.bounceRate,
     channels: r.channels,
+    rfqConversions: r.rfqConversions,
+    supportConversions: r.supportConversions,
+    downloads: r.downloads,
     isAnomaly: anomalousDates?.has(r.date) ?? false,
   }));
 }
@@ -71,12 +77,18 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
         conversionRate: 0,
         bounceRate: 0,
         channels: { organic: 0, direct: 0, referral: 0, paid: 0, social: 0, email: 0, other: 0 },
+        rfqConversions: 0,
+        supportConversions: 0,
+        downloads: 0,
         isAnomaly: false,
       };
       base.sessions += r.sessions;
       base.users += r.users;
       base.pageviews += r.pageviews;
       base.goalConversions += r.goalConversions;
+      base.rfqConversions += r.rfqConversions;
+      base.supportConversions += r.supportConversions;
+      base.downloads += r.downloads;
       for (const ch of Object.keys(base.channels) as Channel[]) {
         base.channels[ch] += r.channels[ch];
       }

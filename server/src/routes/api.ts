@@ -135,6 +135,12 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     const prevConversions = sum(previous, (p) => p.goalConversions);
     const conversionRate = sessions > 0 ? conversions / sessions : 0;
     const prevConversionRate = prevSessions > 0 ? prevConversions / prevSessions : 0;
+    const rfq = sum(current, (p) => p.rfqConversions);
+    const prevRfq = sum(previous, (p) => p.rfqConversions);
+    const support = sum(current, (p) => p.supportConversions);
+    const prevSupport = sum(previous, (p) => p.supportConversions);
+    const downloads = sum(current, (p) => p.downloads);
+    const prevDownloads = sum(previous, (p) => p.downloads);
     return {
       periodDays,
       siteCount: sites.length,
@@ -144,6 +150,12 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       conversionsChangePct: pctChange(conversions, prevConversions, previous, periodDays),
       conversionRateLast7d: conversionRate,
       conversionRateChangePct: pctChange(conversionRate, prevConversionRate, previous, periodDays),
+      rfqLast7d: rfq,
+      rfqChangePct: pctChange(rfq, prevRfq, previous, periodDays),
+      supportLast7d: support,
+      supportChangePct: pctChange(support, prevSupport, previous, periodDays),
+      downloadsLast7d: downloads,
+      downloadsChangePct: pctChange(downloads, prevDownloads, previous, periodDays),
       series,
       excludedAnomalyDays,
     };
