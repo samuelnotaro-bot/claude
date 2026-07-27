@@ -1,0 +1,126 @@
+import type { Finding } from "./trends.js";
+
+/**
+ * Deterministic, rule-based synthesis generator: turns ranked statistical findings
+ * into a short, action-oriented briefing (5-6 bullets). No external/LLM API calls,
+ * so there is zero risk of API usage cost -- everything runs locally from the
+ * numbers already computed by trends.ts.
+ */
+
+function pct(n: number): string {
+  return `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
+}
+
+function pts(n: number): string {
+  return `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)} pts`;
+}
+
+const CHANNEL_LABELS: Record<string, string> = {
+  organic: "SEO / organique",
+  direct: "trafic direct",
+  referral: "référent",
+  paid: "SEA / paid",
+  social: "social",
+  email: "email",
+  other: "autre",
+};
+
+function scopeLabel(f: Finding): string {
+  if (f.scope === "global") return "l'ensemble des 22 sites";
+  if (f.scope === "continent") return f.entityName;
+  return f.entityName;
+}
+
+function bulletForFinding(f: Finding, siblingSessionsFinding?: Finding): string {
+  const who = scopeLabel(f);
+
+  if (f.metric === "sessions") {
+    if (f.direction === "down") {
+      return `Trafic en baisse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours (${Math.round(f.current)} sessions) → auditer en priorité le SEO (indexation, positions), les changements techniques récents et la disponibilité du site.`;
+    }
+    return `Trafic en hausse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours (${Math.round(f.current)} sessions) → identifier le levier gagnant (campagne, contenu, saisonnalité) et le répliquer sur des sites comparables.`;
+  }
+
+  if (f.metric === "conversionRate") {
+    const trafficNote = siblingSessionsFinding
+      ? siblingSessionsFinding.direction === "down"
+        ? " (le trafic recule aussi, effet cumulatif)"
+        : " alors que le trafic est stable ou en hausse"
+      : "";
+    if (f.direction === "down") {
+      return `Taux de conversion en recul sur ${who} : ${pct(f.changePct ?? 0)}${trafficNote} → auditer le tunnel d'achat (mobile en priorité), vérifier un bug de paiement ou un changement UX récent. Action prioritaire : test utilisateur du parcours de conversion.`;
+    }
+    return `Taux de conversion en hausse sur ${who} : ${pct(f.changePct ?? 0)}${trafficNote} → documenter et répliquer le changement (offre, UX, campagne) sur les autres sites du même continent.`;
+  }
+
+  if (f.metric === "goalConversions") {
+    if (f.direction === "down") {
+      return `Volume de conversions en baisse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours → vérifier si la cause est le trafic ou le taux de conversion, et prioriser l'audit du tunnel si le trafic est stable.`;
+    }
+    return `Volume de conversions en hausse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours, bon signal à consolider (retargeting, fidélisation).`;
+  }
+
+  // channelMix
+  const channel = CHANNEL_LABELS[f.detail ?? "other"] ?? f.detail ?? "un canal";
+  if (f.direction === "up") {
+    const action =
+      f.detail === "paid"
+        ? "vérifier le ROI et le budget SEA engagé (dépendance croissante au paid)."
+        : "capitaliser sur ce canal en renforçant les investissements associés.";
+    return `Recomposition des canaux d'acquisition sur ${who} : part du ${channel} en hausse de ${pts(f.changePct ?? 0)} en une semaine → ${action}`;
+  }
+  const action =
+    f.detail === "organic"
+      ? "auditer le référencement naturel (positions, backlinks, Core Web Vitals) avant que la perte ne s'aggrave."
+      : "identifier la cause de la baisse de ce canal et réallouer le budget si nécessaire.";
+  return `Recomposition des canaux d'acquisition sur ${who} : part du ${channel} en baisse de ${pts(f.changePct ?? 0)} en une semaine → ${action}`;
+}
+
+export interface SynthesisResult {
+  bullets: string[];
+  highlights: Record<string, unknown>;
+}
+
+export function generateSynthesis(
+  findings: Finding[],
+  globalOverview: { totalSessions: number; prevTotalSessions: number; conversionRate: number; prevConversionRate: number }
+): SynthesisResult {
+  const overviewChangePct =
+    globalOverview.prevTotalSessions === 0 ? 0 : (globalOverview.totalSessions - globalOverview.prevTotalSessions) / globalOverview.prevTotalSessions;
+  const convChangePct =
+    globalOverview.prevConversionRate === 0 ? 0 : (globalOverview.conversionRate - globalOverview.prevConversionRate) / globalOverview.prevConversionRate;
+
+  const bullets: string[] = [];
+  bullets.push(
+    `Vue d'ensemble (22 sites) : ${Math.round(globalOverview.totalSessions)} sessions sur 7 jours (${pct(overviewChangePct)} vs semaine précédente), taux de conversion global ${(globalOverview.conversionRate * 100).toFixed(2)}% (${pct(convChangePct)}).`
+  );
+
+  const sessionsBySite = new Map(findings.filter((f) => f.metric === "sessions").map((f) => [f.entityId, f]));
+  const ranked = [...findings].sort((a, b) => b.impactScore - a.impactScore);
+
+  const seen = new Set<string>();
+  for (const f of ranked) {
+    if (bullets.length >= 6) break;
+    const key = `${f.scope}:${f.entityId}:${f.metric}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    bullets.push(bulletForFinding(f, f.metric === "conversionRate" ? sessionsBySite.get(f.entityId) : undefined));
+  }
+
+  if (bullets.length < 5) {
+    bullets.push(
+      "Aucune anomalie majeure supplémentaire détectée cette semaine sur les sites et continents suivis → poursuivre la surveillance hebdomadaire, aucune action corrective urgente au-delà des points ci-dessus."
+    );
+  }
+
+  return {
+    bullets: bullets.slice(0, 6),
+    highlights: {
+      totalSessions: globalOverview.totalSessions,
+      overviewChangePct,
+      conversionRate: globalOverview.conversionRate,
+      convChangePct,
+      findingsCount: findings.length,
+    },
+  };
+}

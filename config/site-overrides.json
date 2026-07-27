@@ -1,0 +1,4 @@
+{
+  "_comment": "Optionnel. Force le continent d'un site sans passer par la détection automatique (pays dominant du trafic). Clé = id du site Piwik Pro (uuid en mode live, slug en mode démo), valeur = un des continents ci-dessous.",
+  "_continents": ["Africa", "Asia", "Europe", "North America", "South America", "Oceania"]
+}

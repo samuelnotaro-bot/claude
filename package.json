@@ -1,0 +1,16 @@
+{
+  "name": "piwik-trends-analyzer",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=server",
+    "dev:web": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=server && npm run build --workspace=web",
+    "backfill": "npm run backfill --workspace=server",
+    "seed:demo": "npm run seed:demo --workspace=server"
+  }
+}
