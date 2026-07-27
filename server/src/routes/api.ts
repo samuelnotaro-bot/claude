@@ -4,6 +4,8 @@ import { runTrendAnalysis, runSynthesis } from "../analysis.js";
 import { toDayPoints, aggregateDayPoints } from "../trends.js";
 import { excludeAnomalies, flagAnomalies } from "../anomaly.js";
 import { checkGeoMismatches } from "../geoMismatch.js";
+import { getBackfillStatus } from "../backfillStatus.js";
+import { config } from "../config.js";
 import type { Continent } from "../continent.js";
 
 function lastNDaysRange(n: number): [string, string] {
@@ -44,7 +46,9 @@ function pctChange(current: number, previous: number, previousPoints: unknown[],
 }
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/health", async () => ({ ok: true, mode: config.mode }));
+
+  app.get("/api/backfill/status", async () => getBackfillStatus());
 
   app.get("/api/sites", async () => {
     return getSites();

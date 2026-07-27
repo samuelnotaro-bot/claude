@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Overview } from "./pages/Overview";
 import { Regions } from "./pages/Regions";
 import { Sites } from "./pages/Sites";
 import { Synthesis } from "./pages/Synthesis";
+import { BackfillBanner } from "./components/BackfillBanner";
 import { PeriodProvider, usePeriod, PERIOD_OPTIONS } from "./lib/periodContext";
-import type { PeriodDays } from "./lib/api";
+import { api, type PeriodDays } from "./lib/api";
 
 const TABS = [
   { id: "overview", label: "Vue d'ensemble" },
@@ -35,7 +36,11 @@ function PeriodSelector() {
 
 export function App() {
   const [tab, setTab] = useState<TabId>("overview");
-  const mode = import.meta.env.VITE_PIWIK_MODE ?? "demo";
+  const [mode, setMode] = useState<string>("…");
+
+  useEffect(() => {
+    api.health().then((h) => setMode(h.mode)).catch(() => setMode("?"));
+  }, []);
 
   return (
     <PeriodProvider>
@@ -54,6 +59,7 @@ export function App() {
         </header>
 
         <div className="app">
+          <BackfillBanner />
           <nav className="tabs">
             {TABS.map((t) => (
               <button key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>

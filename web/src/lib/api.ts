@@ -103,6 +103,16 @@ export interface Synthesis {
   highlights: Record<string, unknown>;
 }
 
+export interface BackfillStatus {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  sitesTotal: number;
+  daysTotal: number;
+  daysDone: number;
+}
+
 export interface GeoMismatch {
   siteId: string;
   siteName: string;
@@ -126,4 +136,6 @@ export const api = {
   generateSynthesis: () => post<Synthesis | null>("/api/synthesis/generate"),
   geoMismatches: () => get<GeoMismatch[]>("/api/geo-mismatches"),
   checkGeoMismatches: () => post<GeoMismatch[]>("/api/geo-mismatches/check"),
+  health: () => get<{ ok: boolean; mode: string }>("/api/health"),
+  backfillStatus: () => get<BackfillStatus>("/api/backfill/status"),
 };
