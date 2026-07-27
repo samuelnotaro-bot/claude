@@ -29,6 +29,18 @@ export function upsertSite(site: {
   ).run({ ...site, updatedAt: new Date().toISOString() });
 }
 
+/** Removes any previously-synced site (and its snapshots) that is no longer in scope. */
+export function pruneSites(keepIds: string[]): void {
+  const placeholders = keepIds.map(() => "?").join(",");
+  if (keepIds.length === 0) {
+    db.prepare(`DELETE FROM site_snapshots`).run();
+    db.prepare(`DELETE FROM sites`).run();
+    return;
+  }
+  db.prepare(`DELETE FROM site_snapshots WHERE site_id NOT IN (${placeholders})`).run(...keepIds);
+  db.prepare(`DELETE FROM sites WHERE id NOT IN (${placeholders})`).run(...keepIds);
+}
+
 export function getSites(): SiteRecord[] {
   const rows = db.prepare(`SELECT * FROM sites ORDER BY name`).all() as any[];
   return rows.map((r) => ({

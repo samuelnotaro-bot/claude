@@ -26,7 +26,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 };
 
 function scopeLabel(f: Finding): string {
-  if (f.scope === "global") return "l'ensemble des 22 sites";
+  if (f.scope === "global") return "l'ensemble des sites";
   if (f.scope === "continent") return f.entityName;
   return f.entityName;
 }
@@ -92,7 +92,7 @@ export function generateSynthesis(
 
   const bullets: string[] = [];
   bullets.push(
-    `Vue d'ensemble (22 sites) : ${Math.round(globalOverview.totalSessions)} sessions sur 7 jours (${pct(overviewChangePct)} vs semaine précédente), taux de conversion global ${(globalOverview.conversionRate * 100).toFixed(2)}% (${pct(convChangePct)}).`
+    `Vue d'ensemble : ${Math.round(globalOverview.totalSessions)} sessions sur 7 jours (${pct(overviewChangePct)} vs semaine précédente), taux de conversion global ${(globalOverview.conversionRate * 100).toFixed(2)}% (${pct(convChangePct)}).`
   );
 
   const sessionsBySite = new Map(findings.filter((f) => f.metric === "sessions").map((f) => [f.entityId, f]));

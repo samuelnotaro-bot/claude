@@ -7,7 +7,7 @@ import { Synthesis } from "./pages/Synthesis";
 const TABS = [
   { id: "overview", label: "Vue d'ensemble" },
   { id: "continents", label: "Par continent" },
-  { id: "sites", label: "22 sites" },
+  { id: "sites", label: "Sites" },
   { id: "synthesis", label: "Synthèses" },
 ] as const;
 
@@ -22,7 +22,7 @@ export function App() {
       <header className="app-header">
         <div>
           <h1>Piwik Trends Analyzer</h1>
-          <div className="subtitle">Tendances de visibilité, trafic et conversions — 22 sites, par continent</div>
+          <div className="subtitle">Tendances de visibilité, trafic et conversions — sites à extension pays, par continent</div>
         </div>
         <span className="mode-badge">mode : {mode}</span>
       </header>

@@ -47,7 +47,7 @@ export function Sites() {
   return (
     <div>
       <div className="card">
-        <h2>22 sites — dernière semaine</h2>
+        <h2>Sites — dernière semaine</h2>
         <table className="data-table">
           <thead>
             <tr>

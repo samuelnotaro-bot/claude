@@ -3,7 +3,7 @@ import type { PiwikApp, DailySiteMetrics, CountryBreakdown, Channel } from "./pi
 /**
  * Deterministic mock data used when PIWIK_MODE=demo, so the whole app (backfill,
  * scheduler, trend engine, dashboard) can be exercised without real Piwik Pro
- * credentials. 22 sites spread across 6 continents, with a few sites carrying
+ * credentials. Sites spread across 6 continents, with a few sites carrying
  * deliberate trend/anomaly patterns (traffic drop, conversion divergence, channel
  * mix shift) so the trend engine and synthesis have something real to surface.
  */
@@ -17,33 +17,39 @@ interface DemoSiteDef {
 }
 
 const SITE_DEFS: DemoSiteDef[] = [
-  { id: "site-fr", name: "site-fr.com", country: "FR", tier: 4000, trend: "recent_drop" },
-  { id: "site-de", name: "site-de.com", country: "DE", tier: 3600, trend: "growing" },
-  { id: "site-gb", name: "site-gb.com", country: "GB", tier: 3200, trend: "flat" },
-  { id: "site-es", name: "site-es.com", country: "ES", tier: 2200, trend: "conversion_decline" },
-  { id: "site-it", name: "site-it.com", country: "IT", tier: 2000, trend: "flat" },
-  { id: "site-nl", name: "site-nl.com", country: "NL", tier: 1400, trend: "flat" },
-  { id: "site-pl", name: "site-pl.com", country: "PL", tier: 1100, trend: "growing" },
-  { id: "site-se", name: "site-se.com", country: "SE", tier: 900, trend: "flat" },
+  { id: "site-fr", name: "socomec.fr", country: "FR", tier: 4000, trend: "recent_drop" },
+  { id: "site-de", name: "socomec.de", country: "DE", tier: 3600, trend: "growing" },
+  { id: "site-gb", name: "socomec.co.uk", country: "GB", tier: 3200, trend: "flat" },
+  { id: "site-es", name: "socomec.es", country: "ES", tier: 2200, trend: "conversion_decline" },
+  { id: "site-it", name: "socomec.it", country: "IT", tier: 2000, trend: "flat" },
+  { id: "site-nl", name: "socomec.nl", country: "NL", tier: 1400, trend: "flat" },
+  { id: "site-pl", name: "socomec.pl", country: "PL", tier: 1100, trend: "growing" },
+  { id: "site-se", name: "socomec.se", country: "SE", tier: 900, trend: "flat" },
 
-  { id: "site-us", name: "site-us.com", country: "US", tier: 6000, trend: "channel_shift" },
-  { id: "site-us-shop", name: "site-us-shop.com", country: "US", tier: 2600, trend: "flat" },
-  { id: "site-ca", name: "site-ca.com", country: "CA", tier: 1500, trend: "growing" },
-  { id: "site-mx", name: "site-mx.com", country: "MX", tier: 1200, trend: "flat" },
+  { id: "site-us", name: "socomec.us", country: "US", tier: 6000, trend: "channel_shift" },
+  { id: "site-ca", name: "socomec.ca", country: "CA", tier: 1500, trend: "growing" },
+  { id: "site-mx", name: "socomec.mx", country: "MX", tier: 1200, trend: "flat" },
 
-  { id: "site-jp", name: "site-jp.com", country: "JP", tier: 2400, trend: "declining" },
-  { id: "site-cn", name: "site-cn.com", country: "CN", tier: 3000, trend: "flat" },
-  { id: "site-in", name: "site-in.com", country: "IN", tier: 2800, trend: "growing" },
-  { id: "site-kr", name: "site-kr.com", country: "KR", tier: 1300, trend: "flat" },
-  { id: "site-sg", name: "site-sg.com", country: "SG", tier: 900, trend: "flat" },
+  { id: "site-jp", name: "socomec.jp", country: "JP", tier: 2400, trend: "declining" },
+  { id: "site-cn", name: "socomec.cn", country: "CN", tier: 3000, trend: "flat" },
+  { id: "site-in", name: "socomec.in", country: "IN", tier: 2800, trend: "growing" },
+  { id: "site-kr", name: "socomec.kr", country: "KR", tier: 1300, trend: "flat" },
+  { id: "site-sg", name: "socomec.sg", country: "SG", tier: 900, trend: "flat" },
 
-  { id: "site-br", name: "site-br.com", country: "BR", tier: 1800, trend: "flat" },
-  { id: "site-ar", name: "site-ar.com", country: "AR", tier: 700, trend: "declining" },
+  { id: "site-br", name: "socomec.com.br", country: "BR", tier: 1800, trend: "flat" },
+  { id: "site-ar", name: "socomec.com.ar", country: "AR", tier: 700, trend: "declining" },
 
-  { id: "site-za", name: "site-za.com", country: "ZA", tier: 600, trend: "flat" },
-  { id: "site-ma", name: "site-ma.com", country: "MA", tier: 500, trend: "flat" },
+  { id: "site-za", name: "socomec.co.za", country: "ZA", tier: 600, trend: "flat" },
+  { id: "site-ma", name: "socomec.ma", country: "MA", tier: 500, trend: "flat" },
 
-  { id: "site-au", name: "site-au.com", country: "AU", tier: 1600, trend: "flat" },
+  { id: "site-au", name: "socomec.com.au", country: "AU", tier: 1600, trend: "flat" },
+
+  // Sous-domaines régionaux de socomec.com explicitement autorisés (pas d'extension pays).
+  { id: "site-emea", name: "emea.socomec.com", country: "FR", tier: 2500, trend: "flat" },
+  { id: "site-apac", name: "apac.socomec.com", country: "SG", tier: 1800, trend: "flat" },
+
+  // Hors périmètre : sous-domaine socomec.com non autorisé, filtré par isAppInScope.
+  { id: "site-shop", name: "shop.socomec.com", country: "US", tier: 2600, trend: "flat" },
 ];
 
 function hashStr(s: string): number {

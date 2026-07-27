@@ -2,9 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
 import { countryToContinent } from "./continent.js";
-import { upsertSite, getSites, type SiteRecord } from "./repo.js";
+import { upsertSite, pruneSites, getSites, type SiteRecord } from "./repo.js";
 import * as piwik from "./piwik/client.js";
 import { demoApps, demoTopCountry } from "./demoData.js";
+import { isAppInScope } from "./siteScope.js";
 
 const OVERRIDES_PATH = path.resolve(process.cwd(), "../config/site-overrides.json");
 
@@ -29,7 +30,14 @@ export async function syncSiteRegistry(lookbackDays = 90): Promise<SiteRecord[]>
   const dateFrom = from.toISOString().slice(0, 10);
   const dateTo = to.toISOString().slice(0, 10);
 
-  const apps = config.mode === "live" ? await piwik.listApps() : demoApps();
+  const allApps = config.mode === "live" ? await piwik.listApps() : demoApps();
+  const apps = allApps.filter(isAppInScope);
+  const excluded = allApps.length - apps.length;
+  if (excluded > 0) {
+    console.log(
+      `[siteRegistry] ${excluded} site(s) hors périmètre ignoré(s) (pas d'extension pays, ou sous-domaine socomec.com non autorisé).`
+    );
+  }
 
   for (const app of apps) {
     const override = overrides[app.id];
@@ -57,6 +65,8 @@ export async function syncSiteRegistry(lookbackDays = 90): Promise<SiteRecord[]>
       detectedCountry: top?.country ?? null,
     });
   }
+
+  pruneSites(apps.map((app) => app.id));
 
   return getSites();
 }

@@ -1,11 +1,12 @@
 # Piwik Trends Analyzer
 
 Application connectée à Piwik Pro pour suivre les tendances de **visibilité**, de
-**captation de trafic** et de **conversions** sur 22 sites, agrégées par continent,
-avec une synthèse périodique en 5-6 points orientée plan d'action.
+**captation de trafic** et de **conversions** sur les sites Socomec à extension
+pays (+ hubs régionaux `emea.socomec.com` / `apac.socomec.com`), agrégées par
+continent, avec une synthèse périodique en 5-6 points orientée plan d'action.
 
-- **Dashboard web** (React) : vue d'ensemble, détail par continent, détail des 22
-  sites, historique des synthèses.
+- **Dashboard web** (React) : vue d'ensemble, détail par continent, détail par
+  site, historique des synthèses.
 - **Job planifié** (Node/cron) : récupère les métriques Piwik Pro chaque jour et
   génère une synthèse hebdomadaire automatiquement.
 - **Détection automatique des continents** : chaque site est rattaché au continent
@@ -33,20 +34,48 @@ config/   site-overrides.json (rattachement manuel continent, optionnel)
 
 ```bash
 npm install
-npm run seed:demo        # génère 22 sites démo + 90 jours d'historique + 1re synthèse
+npm run seed:demo        # génère les sites démo (dont un hors périmètre) + 90 jours d'historique + 1re synthèse
 npm run dev:server        # API sur http://localhost:4000
 npm run dev:web            # Dashboard sur http://localhost:5173 (autre terminal)
 ```
 
-Le mode démo (`PIWIK_MODE=demo`, valeur par défaut) simule 22 sites répartis sur
-6 continents avec des schémas de tendances réalistes (chute de trafic, recul de
-conversion, bascule SEO→SEA) pour que le moteur d'analyse ait quelque chose de
-concret à détecter dès le premier lancement.
+Le mode démo (`PIWIK_MODE=demo`, valeur par défaut) simule les sites pays +
+`emea`/`apac.socomec.com` répartis sur 6 continents, plus un site
+`shop.socomec.com` volontairement hors périmètre pour illustrer le filtrage
+(voir « Périmètre des sites suivis » ci-dessous), avec des schémas de tendances
+réalistes (chute de trafic, recul de conversion, bascule SEO→SEA) pour que le
+moteur d'analyse ait quelque chose de concret à détecter dès le premier
+lancement.
+
+## Périmètre des sites suivis
+
+L'application ne retient que les sites Piwik Pro sur une **extension de domaine
+pays** (ccTLD), ex. `socomec.fr`, `socomec.co.uk`, `socomec.com.br`. Le domaine
+générique `socomec.com` est exclu, à l'exception explicite de deux sous-domaines
+régionaux : `emea.socomec.com` et `apac.socomec.com`. Tout autre sous-domaine de
+`socomec.com` (apex, `www`, `shop`, `blog`, ...) est ignoré.
+
+Cette règle est appliquée par `server/src/siteScope.ts` (`isAppInScope`) lors de
+chaque découverte de sites (`syncSiteRegistry`) : les sites hors périmètre ne
+sont jamais importés, et un site précédemment synchronisé qui sort du périmètre
+(changement de config) est automatiquement retiré de la base au prochain sync.
+
+## Tester la connexion Piwik Pro
+
+```bash
+npm run test:connection
+```
+
+Nécessite `PIWIK_MODE=live` et les identifiants OAuth2 dans `.env`. La commande
+authentifie le client, liste les sites visibles par l'API Management, puis
+affiche lesquels sont dans le périmètre et lesquels sont ignorés — utile pour
+vérifier les identifiants et la règle de filtrage avant de lancer un
+`backfill` complet.
 
 ## Passer en production avec votre Piwik Pro
 
 1. Dans Piwik Pro : **Administration > Custom access clients**, créez un client
-   OAuth2 avec un accès en lecture (Analytics + Apps) sur vos 22 sites.
+   OAuth2 avec un accès en lecture (Analytics + Apps) sur vos sites.
 2. Copiez `.env.example` vers `.env` et renseignez :
    ```
    PIWIK_MODE=live
@@ -54,10 +83,13 @@ concret à détecter dès le premier lancement.
    PIWIK_CLIENT_ID=...
    PIWIK_CLIENT_SECRET=...
    ```
-3. `npm run backfill` — découvre vos 22 sites via l'API Management, détecte
-   automatiquement le continent de chacun (pays dominant du trafic sur 90 jours),
-   puis importe l'historique et génère une première synthèse.
-4. `npm run dev:server` (ou `npm run build && node server/dist/index.js` en
+3. `npm run test:connection` — vérifie l'authentification et affiche le détail
+   du filtrage (voir ci-dessus) sans toucher à la base de données.
+4. `npm run backfill` — découvre vos sites via l'API Management, ne retient que
+   ceux dans le périmètre défini plus haut, détecte automatiquement le
+   continent de chacun (pays dominant du trafic sur 90 jours), puis importe
+   l'historique et génère une première synthèse.
+5. `npm run dev:server` (ou `npm run build && node server/dist/index.js` en
    production) démarre l'API **et** le planificateur (fetch quotidien + synthèse
    hebdomadaire, horaires réglables via `FETCH_CRON` / `SYNTHESIS_CRON`).
 
@@ -76,7 +108,10 @@ Si le trafic dominant d'un site ne reflète pas correctement son marché cible
 { "<id-du-site-piwik-pro>": "Europe" }
 ```
 
-Cette valeur prime sur la détection automatique.
+Cette valeur prime sur la détection automatique. `config/site-overrides.json`
+contient déjà un exemple pour les deux hubs régionaux du mode démo
+(`site-emea` → Europe, `site-apac` → Asia) ; en mode live, remplacez ces clés
+par les vrais UUID Piwik Pro de `emea.socomec.com` et `apac.socomec.com`.
 
 ## Synthèse périodique
 

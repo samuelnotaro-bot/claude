@@ -1,4 +1,6 @@
 {
-  "_comment": "Optionnel. Force le continent d'un site sans passer par la détection automatique (pays dominant du trafic). Clé = id du site Piwik Pro (uuid en mode live, slug en mode démo), valeur = un des continents ci-dessous.",
-  "_continents": ["Africa", "Asia", "Europe", "North America", "South America", "Oceania"]
+  "_comment": "Optionnel. Force le continent d'un site sans passer par la détection automatique (pays dominant du trafic). Clé = id du site Piwik Pro (uuid en mode live, slug en mode démo), valeur = un des continents ci-dessous. Utile en particulier pour les hubs régionaux (emea.socomec.com, apac.socomec.com) dont le trafic ne correspond à aucun pays unique.",
+  "_continents": ["Africa", "Asia", "Europe", "North America", "South America", "Oceania"],
+  "site-emea": "Europe",
+  "site-apac": "Asia"
 }

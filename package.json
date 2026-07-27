@@ -11,6 +11,7 @@
     "dev:web": "npm run dev --workspace=web",
     "build": "npm run build --workspace=server && npm run build --workspace=web",
     "backfill": "npm run backfill --workspace=server",
+    "test:connection": "npm run test:connection --workspace=server",
     "seed:demo": "npm run seed:demo --workspace=server"
   }
 }
