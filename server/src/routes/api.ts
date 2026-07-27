@@ -22,9 +22,9 @@ const ANOMALY_BASELINE_PADDING_DAYS = 28;
  * baseline to compare against. Returns only the last `windowDays` clean rows, plus
  * how many of the excluded days fall inside that window (for the UI badge).
  */
-function cleanRowsForSite(siteId: string, windowDays: number): { rows: SnapshotRow[]; excludedInWindow: number } {
+async function cleanRowsForSite(siteId: string, windowDays: number): Promise<{ rows: SnapshotRow[]; excludedInWindow: number }> {
   const [from, to] = lastNDaysRange(windowDays + ANOMALY_BASELINE_PADDING_DAYS);
-  const raw = getSnapshotsForSite(siteId, from, to);
+  const raw = await getSnapshotsForSite(siteId, from, to);
   const { clean, anomalies } = excludeAnomalies(raw);
   const [windowFrom] = lastNDaysRange(windowDays);
   const excludedInWindow = anomalies.filter((a) => a.date >= windowFrom).length;
@@ -59,32 +59,34 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Querystring: { days?: string } }>("/api/sites/summary", async (req) => {
     const periodDays = periodDaysFromQuery(req.query.days);
-    const sites = getSites();
-    return sites.map((s) => {
-      const { rows, excludedInWindow } = cleanRowsForSite(s.id, periodDays * 2);
-      const series = toDayPoints(rows);
-      const current = series.slice(-periodDays);
-      const previous = series.slice(-periodDays * 2, -periodDays);
-      const sum = (pts: typeof series, pick: (p: (typeof series)[number]) => number) => pts.reduce((a, p) => a + pick(p), 0);
-      const sessions = sum(current, (p) => p.sessions);
-      const prevSessions = sum(previous, (p) => p.sessions);
-      const conversions = sum(current, (p) => p.goalConversions);
-      return {
-        id: s.id,
-        name: s.name,
-        region: s.continent,
-        sessionsLast7d: sessions,
-        sessionsChangePct: pctChange(sessions, prevSessions, previous, periodDays),
-        conversionsLast7d: conversions,
-        conversionRateLast7d: sessions > 0 ? conversions / sessions : 0,
-        excludedAnomalyDays: excludedInWindow,
-      };
-    });
+    const sites = await getSites();
+    return Promise.all(
+      sites.map(async (s) => {
+        const { rows, excludedInWindow } = await cleanRowsForSite(s.id, periodDays * 2);
+        const series = toDayPoints(rows);
+        const current = series.slice(-periodDays);
+        const previous = series.slice(-periodDays * 2, -periodDays);
+        const sum = (pts: typeof series, pick: (p: (typeof series)[number]) => number) => pts.reduce((a, p) => a + pick(p), 0);
+        const sessions = sum(current, (p) => p.sessions);
+        const prevSessions = sum(previous, (p) => p.sessions);
+        const conversions = sum(current, (p) => p.goalConversions);
+        return {
+          id: s.id,
+          name: s.name,
+          region: s.continent,
+          sessionsLast7d: sessions,
+          sessionsChangePct: pctChange(sessions, prevSessions, previous, periodDays),
+          conversionsLast7d: conversions,
+          conversionRateLast7d: sessions > 0 ? conversions / sessions : 0,
+          excludedAnomalyDays: excludedInWindow,
+        };
+      })
+    );
   });
 
   app.get<{ Querystring: { days?: string } }>("/api/regions", async (req) => {
     const periodDays = periodDaysFromQuery(req.query.days);
-    const sites = getSites();
+    const sites = await getSites();
     const byRegion = new Map<Continent, string[]>();
     for (const s of sites) {
       const list = byRegion.get(s.continent) ?? [];
@@ -93,13 +95,9 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     }
     const result = [];
     for (const [region, siteIds] of byRegion) {
-      const rows: SnapshotRow[][] = [];
-      let excludedAnomalyDays = 0;
-      for (const id of siteIds) {
-        const cleaned = cleanRowsForSite(id, periodDays * 2);
-        rows.push(cleaned.rows);
-        excludedAnomalyDays += cleaned.excludedInWindow;
-      }
+      const cleaned = await Promise.all(siteIds.map((id) => cleanRowsForSite(id, periodDays * 2)));
+      const rows = cleaned.map((c) => c.rows);
+      const excludedAnomalyDays = cleaned.reduce((a, c) => a + c.excludedInWindow, 0);
       const series = aggregateDayPoints(rows);
       const current = series.slice(-periodDays);
       const previous = series.slice(-periodDays * 2, -periodDays);
@@ -123,14 +121,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Querystring: { days?: string } }>("/api/overview", async (req) => {
     const periodDays = periodDaysFromQuery(req.query.days);
-    const sites = getSites();
-    const rows: SnapshotRow[][] = [];
-    let excludedAnomalyDays = 0;
-    for (const s of sites) {
-      const cleaned = cleanRowsForSite(s.id, periodDays * 2);
-      rows.push(cleaned.rows);
-      excludedAnomalyDays += cleaned.excludedInWindow;
-    }
+    const sites = await getSites();
+    const cleaned = await Promise.all(sites.map((s) => cleanRowsForSite(s.id, periodDays * 2)));
+    const rows = cleaned.map((c) => c.rows);
+    const excludedAnomalyDays = cleaned.reduce((a, c) => a + c.excludedInWindow, 0);
     const series = aggregateDayPoints(rows);
     const current = series.slice(-periodDays);
     const previous = series.slice(-periodDays * 2, -periodDays);
@@ -169,13 +163,13 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
       if (scope === "site") {
         if (!id) return reply.code(400).send({ error: "id is required for scope=site" });
-        const raw = getSnapshotsForSite(id, paddedFrom, to);
+        const raw = await getSnapshotsForSite(id, paddedFrom, to);
         const anomalousDates = new Set(flagAnomalies(raw).keys());
         return toDayPoints(raw, anomalousDates).slice(-n);
       }
-      const sites = getSites();
+      const sites = await getSites();
       const filtered = scope === "region" ? sites.filter((s) => s.continent === id) : sites;
-      const rows = filtered.map((s) => getSnapshotsForSite(s.id, paddedFrom, to));
+      const rows = await Promise.all(filtered.map((s) => getSnapshotsForSite(s.id, paddedFrom, to)));
       const anomalousDatesBySite = rows.map((r) => new Set(flagAnomalies(r).keys()));
       return aggregateDayPoints(rows, anomalousDatesBySite).slice(-n);
     }
@@ -183,7 +177,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Querystring: { limit?: string } }>("/api/findings", async (req) => {
     const limit = req.query.limit ? Number(req.query.limit) : 20;
-    const { findings } = runTrendAnalysis();
+    const { findings } = await runTrendAnalysis();
     return findings.slice(0, limit);
   });
 
@@ -197,7 +191,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/synthesis/generate", async () => {
-    runSynthesis();
+    await runSynthesis();
     return getLatestSynthesis();
   });
 }

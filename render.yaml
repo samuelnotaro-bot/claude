@@ -25,8 +25,8 @@ services:
         sync: false
       - key: DASHBOARD_PASSWORD
         sync: false
-      - key: BACKFILL_DAYS
-        value: "35"
+      - key: DATABASE_URL
+        sync: false
       - key: FETCH_CRON
         value: "0 6 * * *"
       - key: SYNTHESIS_CRON

@@ -3,44 +3,61 @@
 Application connectée à Piwik Pro pour suivre les tendances de **visibilité**, de
 **captation de trafic** et de **conversions** sur les sites Socomec à extension
 pays (+ hubs régionaux `emea.socomec.com` / `apac.socomec.com`), agrégées par
-continent, avec une synthèse périodique en 5-6 points orientée plan d'action.
+région business (**NAM / APAC / EMEA**), avec une synthèse périodique en 5-6
+points orientée plan d'action.
 
-- **Dashboard web** (React) : vue d'ensemble, détail par continent, détail par
-  site, historique des synthèses.
+- **Dashboard web** (React) : vue d'ensemble, détail par région business, détail
+  par site, historique des synthèses — sélecteur de période (7/30/90/365 jours)
+  partagé sur tout le dashboard.
 - **Job planifié** (Node/cron) : récupère les métriques Piwik Pro chaque jour et
   génère une synthèse hebdomadaire automatiquement.
-- **Détection automatique des continents** : chaque site est rattaché au continent
-  du pays d'où provient la majorité de son trafic (surchargeable manuellement).
+- **Régions business fixes** : NAM/APAC/EMEA, définies par domaine (pas de
+  géo-détection), surchargeables site par site si besoin.
+- **Détection des pics de trafic anormal** : volume + concentration organique
+  statistiquement hors norme (bots/crawlers non filtrés par Piwik Pro) — exclus
+  des KPIs affichés aux directions, visibles dans le détail pour les analystes.
 - **Synthèse sans risque de surcoût API** : générée par un moteur de règles
   statistiques local (variations semaine/semaine, z-score vs. historique,
   ruptures de mix de canaux) — aucun appel à une API LLM externe.
+- **Protection d'accès** : authentification HTTP Basic (type "htaccess") devant
+  tout le dashboard et l'API.
 
 ## Architecture
 
 ```
-server/   API Node.js/TypeScript (Fastify) + SQLite (better-sqlite3)
+server/   API Node.js/TypeScript (Fastify) + PostgreSQL (pg)
   src/piwik/        client Piwik Pro (OAuth2 + Management API + Analytics Query API)
-  src/continent.ts  mapping pays -> continent
-  src/siteRegistry.ts découverte des sites + détection de continent
-  src/trends.ts     détection de tendances/anomalies (WoW, z-score, mix de canaux)
+  src/continent.ts  régions business Socomec (NAM/APAC/EMEA) par nom de domaine
+  src/siteScope.ts  filtre "extension pays" (quels sites Piwik Pro sont suivis)
+  src/siteRegistry.ts découverte des sites + rattachement à une région
+  src/anomaly.ts    détection des pics de trafic anormal (voir ci-dessous)
+  src/trends.ts     détection de tendances (WoW, z-score, mix de canaux)
   src/synthesis.ts  génération des bullet points (règles, pas de LLM)
   src/scheduler.ts  cron: fetch quotidien + synthèse hebdomadaire
+  src/basicAuth.ts  protection HTTP Basic de tout le dashboard
+  src/staticWeb.ts  sert le build web (web/dist) depuis ce même serveur
   src/demoData.ts   générateur de données de démonstration
 web/      Dashboard React (Vite) + Recharts
-config/   site-overrides.json (rattachement manuel continent, optionnel)
+  src/lib/periodContext.tsx  sélecteur de période partagé (contexte React)
+config/   site-overrides.json (rattachement manuel région, optionnel)
 ```
 
 ## Démarrage rapide (mode démo, sans identifiants Piwik Pro)
 
+Nécessite une base **PostgreSQL** (locale ou distante, gratuite sur Render par
+exemple) — voir `.env.example` pour le format de `DATABASE_URL`. Le schéma est
+créé automatiquement au démarrage, aucune migration manuelle nécessaire.
+
 ```bash
 npm install
-npm run seed:demo        # génère les sites démo (dont un hors périmètre) + 90 jours d'historique + 1re synthèse
+cp .env.example .env      # renseigner au moins DATABASE_URL
+npm run seed:demo        # génère les sites démo (dont un hors périmètre) + historique + 1re synthèse
 npm run dev:server        # API sur http://localhost:4000
 npm run dev:web            # Dashboard sur http://localhost:5173 (autre terminal)
 ```
 
 Le mode démo (`PIWIK_MODE=demo`, valeur par défaut) simule les sites pays +
-`emea`/`apac.socomec.com` répartis sur 6 continents, plus un site
+`emea`/`apac.socomec.com` répartis sur les 3 régions business, plus un site
 `shop.socomec.com` volontairement hors périmètre pour illustrer le filtrage
 (voir « Périmètre des sites suivis » ci-dessous), avec des schémas de tendances
 réalistes (chute de trafic, recul de conversion, bascule SEO→SEA) pour que le
@@ -86,9 +103,9 @@ vérifier les identifiants et la règle de filtrage avant de lancer un
 3. `npm run test:connection` — vérifie l'authentification et affiche le détail
    du filtrage (voir ci-dessus) sans toucher à la base de données.
 4. `npm run backfill` — découvre vos sites via l'API Management, ne retient que
-   ceux dans le périmètre défini plus haut, détecte automatiquement le
-   continent de chacun (pays dominant du trafic sur 90 jours), puis importe
-   l'historique et génère une première synthèse.
+   ceux dans le périmètre défini plus haut, rattache chacun à sa région business
+   (NAM/APAC/EMEA, voir plus bas), puis importe l'historique et génère une
+   première synthèse.
 5. `npm run dev:server` (ou `npm run build && node server/dist/index.js` en
    production) démarre l'API **et** le planificateur (fetch quotidien + synthèse
    hebdomadaire, horaires réglables via `FETCH_CRON` / `SYNTHESIS_CRON`).
@@ -102,25 +119,29 @@ vérifier les identifiants et la règle de filtrage avant de lancer un
 > confirmer auprès du support Piwik Pro ou de l'API Explorer si cette métrique
 > est nécessaire.
 
-## Rattachement manuel d'un continent
+## Régions business (NAM / APAC / EMEA)
 
-Si le trafic dominant d'un site ne reflète pas correctement son marché cible
-(ex : un site "global" en anglais), éditez `config/site-overrides.json` :
+Chaque site est rattaché à une région business Socomec fixe, définie par nom de
+domaine dans `server/src/continent.ts` (`businessRegionForSite`) :
+
+- **NAM** : `socomec.us`
+- **APAC** : `socomec.cn`, `socomec.co.in`, `apac.socomec.com`
+- **EMEA** : tous les autres sites (catch-all)
+
+Ce n'est pas une détection géographique du trafic — c'est la définition métier
+de Socomec. Pour une exception ponctuelle, éditez `config/site-overrides.json` :
 
 ```json
-{ "<id-du-site-piwik-pro>": "Europe" }
+{ "<id-du-site-piwik-pro>": "APAC" }
 ```
 
-Cette valeur prime sur la détection automatique. `config/site-overrides.json`
-contient déjà un exemple pour les deux hubs régionaux du mode démo
-(`site-emea` → Europe, `site-apac` → Asia) ; en mode live, remplacez ces clés
-par les vrais UUID Piwik Pro de `emea.socomec.com` et `apac.socomec.com`.
+Cette valeur prime sur la règle par défaut.
 
 ## Synthèse périodique
 
 Chaque semaine (configurable via `SYNTHESIS_CRON`), le moteur :
 1. calcule les variations 7j/7j précédents pour le trafic, le taux de conversion
-   et la répartition des canaux, par site, par continent et globalement ;
+   et la répartition des canaux, par site, par région business et globalement ;
 2. isole les écarts statistiquement significatifs (z-score vs. 8 semaines de
    référence) ;
 3. classe les résultats par impact (ampleur du changement × volume concerné) ;
@@ -130,10 +151,27 @@ Chaque semaine (configurable via `SYNTHESIS_CRON`), le moteur :
 Le bouton **Générer maintenant** dans l'onglet Synthèses permet de relancer le
 calcul à la demande.
 
+## Détection des pics de trafic anormal
+
+`server/src/anomaly.ts` flague un jour comme anormal quand le volume de sessions
+est statistiquement très au-dessus de la référence récente **et** que la part de
+trafic organique est anormalement concentrée — signature observée sur cette
+organisation Piwik Pro pour des vagues de bots/crawlers que le filtre Piwik Pro
+natif ne détecte jamais (`visitor_type` reste à "Human" à 100%).
+
+Ces jours sont exclus du calcul des KPIs affichés (`/api/overview`,
+`/api/regions`, `/api/sites/summary`) mais restent visibles (point rouge) dans
+les graphiques de détail par site/région, avec le nombre de jours exclus affiché
+en petit sous les KPIs concernés.
+
+**Limite connue** : seuls les pics statistiquement extrêmes sont détectés — un
+bruit de fond de trafic non-humain à un niveau plus faible, sous le seuil de
+détection, reste inclus dans les KPIs. La solution durable est de vérifier le
+filtre anti-bot dans Piwik Pro (Administration > Confidentialité).
+
 ## Limites connues / prochaines étapes possibles
 
 - Pas de canal d'alerte (email/Slack) pour l'instant — la synthèse est
   consultable dans le dashboard, à la demande de l'utilisateur.
-- Le mapping colonnes de l'API Piwik Pro (`COLUMN_IDS`) n'a pas pu être testé
-  contre un vrai compte (pas d'identifiants disponibles pendant le
-  développement) — à vérifier lors du premier `backfill` en mode `live`.
+- Pas de détection des écarts géographiques (ex : trafic indien important sur
+  le site UK) — piste identifiée, pas encore implémentée.

@@ -1,4 +1,4 @@
-import { db } from "./db.js";
+import { pool } from "./db.js";
 import type { Continent } from "./continent.js";
 import type { DailySiteMetrics } from "./piwik/types.js";
 
@@ -11,38 +11,38 @@ export interface SiteRecord {
   updatedAt: string;
 }
 
-export function upsertSite(site: {
+export async function upsertSite(site: {
   id: string;
   name: string;
   continent: Continent;
   continentSource: "auto" | "manual";
   detectedCountry: string | null;
-}) {
-  db.prepare(
+}): Promise<void> {
+  await pool.query(
     `INSERT INTO sites (id, name, continent, continent_source, detected_country, updated_at)
-     VALUES (@id, @name, @continent, @continentSource, @detectedCountry, @updatedAt)
-     ON CONFLICT(id) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO UPDATE SET
        name = excluded.name,
        continent = CASE WHEN sites.continent_source = 'manual' THEN sites.continent ELSE excluded.continent END,
        detected_country = excluded.detected_country,
-       updated_at = excluded.updated_at`
-  ).run({ ...site, updatedAt: new Date().toISOString() });
+       updated_at = excluded.updated_at`,
+    [site.id, site.name, site.continent, site.continentSource, site.detectedCountry, new Date().toISOString()]
+  );
 }
 
 /** Removes any previously-synced site (and its snapshots) that is no longer in scope. */
-export function pruneSites(keepIds: string[]): void {
-  const placeholders = keepIds.map(() => "?").join(",");
+export async function pruneSites(keepIds: string[]): Promise<void> {
   if (keepIds.length === 0) {
-    db.prepare(`DELETE FROM site_snapshots`).run();
-    db.prepare(`DELETE FROM sites`).run();
+    await pool.query(`DELETE FROM site_snapshots`);
+    await pool.query(`DELETE FROM sites`);
     return;
   }
-  db.prepare(`DELETE FROM site_snapshots WHERE site_id NOT IN (${placeholders})`).run(...keepIds);
-  db.prepare(`DELETE FROM sites WHERE id NOT IN (${placeholders})`).run(...keepIds);
+  await pool.query(`DELETE FROM site_snapshots WHERE site_id <> ALL($1)`, [keepIds]);
+  await pool.query(`DELETE FROM sites WHERE id <> ALL($1)`, [keepIds]);
 }
 
-export function getSites(): SiteRecord[] {
-  const rows = db.prepare(`SELECT * FROM sites ORDER BY name`).all() as any[];
+export async function getSites(): Promise<SiteRecord[]> {
+  const { rows } = await pool.query(`SELECT * FROM sites ORDER BY name`);
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -53,40 +53,38 @@ export function getSites(): SiteRecord[] {
   }));
 }
 
-export function upsertSnapshot(m: DailySiteMetrics) {
-  db.prepare(
+export async function upsertSnapshot(m: DailySiteMetrics): Promise<void> {
+  await pool.query(
     `INSERT INTO site_snapshots (
       site_id, date, sessions, users, pageviews, goal_conversions, bounce_rate, avg_session_duration_sec,
       channel_organic, channel_direct, channel_referral, channel_paid, channel_social, channel_email, channel_other
-    ) VALUES (
-      @siteId, @date, @sessions, @users, @pageviews, @goalConversions, @bounceRate, @avgSessionDurationSec,
-      @organic, @direct, @referral, @paid, @social, @email, @other
-    )
-    ON CONFLICT(site_id, date) DO UPDATE SET
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    ON CONFLICT (site_id, date) DO UPDATE SET
       sessions = excluded.sessions, users = excluded.users, pageviews = excluded.pageviews,
       goal_conversions = excluded.goal_conversions, bounce_rate = excluded.bounce_rate,
       avg_session_duration_sec = excluded.avg_session_duration_sec,
       channel_organic = excluded.channel_organic, channel_direct = excluded.channel_direct,
       channel_referral = excluded.channel_referral, channel_paid = excluded.channel_paid,
       channel_social = excluded.channel_social, channel_email = excluded.channel_email,
-      channel_other = excluded.channel_other`
-  ).run({
-    siteId: m.siteId,
-    date: m.date,
-    sessions: m.sessions,
-    users: m.users,
-    pageviews: m.pageviews,
-    goalConversions: m.goalConversions,
-    bounceRate: m.bounceRate,
-    avgSessionDurationSec: m.avgSessionDurationSec,
-    organic: m.channels.organic,
-    direct: m.channels.direct,
-    referral: m.channels.referral,
-    paid: m.channels.paid,
-    social: m.channels.social,
-    email: m.channels.email,
-    other: m.channels.other,
-  });
+      channel_other = excluded.channel_other`,
+    [
+      m.siteId,
+      m.date,
+      m.sessions,
+      m.users,
+      m.pageviews,
+      m.goalConversions,
+      m.bounceRate,
+      m.avgSessionDurationSec,
+      m.channels.organic,
+      m.channels.direct,
+      m.channels.referral,
+      m.channels.paid,
+      m.channels.social,
+      m.channels.email,
+      m.channels.other,
+    ]
+  );
 }
 
 export interface SnapshotRow {
@@ -101,17 +99,16 @@ export interface SnapshotRow {
   channels: { organic: number; direct: number; referral: number; paid: number; social: number; email: number; other: number };
 }
 
-export function getSnapshots(dateFrom: string, dateTo: string): SnapshotRow[] {
-  const rows = db
-    .prepare(`SELECT * FROM site_snapshots WHERE date BETWEEN ? AND ? ORDER BY date`)
-    .all(dateFrom, dateTo) as any[];
+export async function getSnapshots(dateFrom: string, dateTo: string): Promise<SnapshotRow[]> {
+  const { rows } = await pool.query(`SELECT * FROM site_snapshots WHERE date BETWEEN $1 AND $2 ORDER BY date`, [dateFrom, dateTo]);
   return rows.map(rowToSnapshot);
 }
 
-export function getSnapshotsForSite(siteId: string, dateFrom: string, dateTo: string): SnapshotRow[] {
-  const rows = db
-    .prepare(`SELECT * FROM site_snapshots WHERE site_id = ? AND date BETWEEN ? AND ? ORDER BY date`)
-    .all(siteId, dateFrom, dateTo) as any[];
+export async function getSnapshotsForSite(siteId: string, dateFrom: string, dateTo: string): Promise<SnapshotRow[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM site_snapshots WHERE site_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date`,
+    [siteId, dateFrom, dateTo]
+  );
   return rows.map(rowToSnapshot);
 }
 
@@ -146,20 +143,21 @@ export interface SynthesisRecord {
   highlights: Record<string, unknown>;
 }
 
-export function saveSynthesis(s: { periodFrom: string; periodTo: string; bullets: string[]; highlights: Record<string, unknown> }) {
-  db.prepare(
+export async function saveSynthesis(s: { periodFrom: string; periodTo: string; bullets: string[]; highlights: Record<string, unknown> }): Promise<void> {
+  await pool.query(
     `INSERT INTO synthesis_history (generated_at, period_from, period_to, bullets, highlights)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(new Date().toISOString(), s.periodFrom, s.periodTo, JSON.stringify(s.bullets), JSON.stringify(s.highlights));
+     VALUES ($1, $2, $3, $4, $5)`,
+    [new Date().toISOString(), s.periodFrom, s.periodTo, JSON.stringify(s.bullets), JSON.stringify(s.highlights)]
+  );
 }
 
-export function getLatestSynthesis(): SynthesisRecord | null {
-  const row = db.prepare(`SELECT * FROM synthesis_history ORDER BY id DESC LIMIT 1`).get() as any;
-  return row ? rowToSynthesis(row) : null;
+export async function getLatestSynthesis(): Promise<SynthesisRecord | null> {
+  const { rows } = await pool.query(`SELECT * FROM synthesis_history ORDER BY id DESC LIMIT 1`);
+  return rows[0] ? rowToSynthesis(rows[0]) : null;
 }
 
-export function getSynthesisHistory(limit = 20): SynthesisRecord[] {
-  const rows = db.prepare(`SELECT * FROM synthesis_history ORDER BY id DESC LIMIT ?`).all(limit) as any[];
+export async function getSynthesisHistory(limit = 20): Promise<SynthesisRecord[]> {
+  const { rows } = await pool.query(`SELECT * FROM synthesis_history ORDER BY id DESC LIMIT $1`, [limit]);
   return rows.map(rowToSynthesis);
 }
 

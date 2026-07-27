@@ -18,10 +18,10 @@ export function startScheduler(): void {
     }
   });
 
-  cron.schedule(config.synthesisCron, () => {
+  cron.schedule(config.synthesisCron, async () => {
     try {
       console.log("[scheduler] generating periodic synthesis...");
-      runSynthesis();
+      await runSynthesis();
       console.log("[scheduler] periodic synthesis done.");
     } catch (err) {
       console.error("[scheduler] periodic synthesis failed:", err);

@@ -1,4 +1,4 @@
-import { getSites, getSnapshotsForSite, saveSynthesis } from "./repo.js";
+import { getSites, getSnapshotsForSite, saveSynthesis, type SnapshotRow } from "./repo.js";
 import { toDayPoints, aggregateDayPoints, findTrendsForEntity, rankFindings, type Finding, type DayPoint } from "./trends.js";
 import { excludeAnomalies } from "./anomaly.js";
 import { generateSynthesis } from "./synthesis.js";
@@ -19,15 +19,15 @@ export interface AnalysisResult {
   globalSeries: DayPoint[];
 }
 
-export function runTrendAnalysis(): AnalysisResult {
-  const sites = getSites();
+export async function runTrendAnalysis(): Promise<AnalysisResult> {
+  const sites = await getSites();
   const dateFrom = dateNDaysAgo(HISTORY_DAYS);
   const dateTo = dateNDaysAgo(0);
 
   const siteSeries: Record<string, DayPoint[]> = {};
-  const siteRowsById: Record<string, ReturnType<typeof getSnapshotsForSite>> = {};
+  const siteRowsById: Record<string, SnapshotRow[]> = {};
   for (const site of sites) {
-    const rawRows = getSnapshotsForSite(site.id, dateFrom, dateTo);
+    const rawRows = await getSnapshotsForSite(site.id, dateFrom, dateTo);
     // Trend detection and the weekly synthesis must never mistake a traffic-flood
     // anomaly for a real trend -- see anomaly.ts for why (Piwik Pro's own bot
     // detection never fires on this data).
@@ -62,8 +62,8 @@ export function runTrendAnalysis(): AnalysisResult {
   return { findings: rankFindings(findings), siteSeries, regionSeries, globalSeries };
 }
 
-export function runSynthesis(): void {
-  const { findings, globalSeries } = runTrendAnalysis();
+export async function runSynthesis(): Promise<void> {
+  const { findings, globalSeries } = await runTrendAnalysis();
 
   const last7 = globalSeries.slice(-7);
   const prev7 = globalSeries.slice(-14, -7);
@@ -85,5 +85,5 @@ export function runSynthesis(): void {
 
   const periodFrom = last7[0]?.date ?? dateNDaysAgo(7);
   const periodTo = last7[last7.length - 1]?.date ?? dateNDaysAgo(0);
-  saveSynthesis({ periodFrom, periodTo, bullets, highlights });
+  await saveSynthesis({ periodFrom, periodTo, bullets, highlights });
 }

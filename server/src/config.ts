@@ -1,5 +1,4 @@
 import "dotenv/config";
-import path from "node:path";
 
 function env(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -17,7 +16,7 @@ export const config = {
     clientSecret: process.env.PIWIK_CLIENT_SECRET ?? "",
   },
   port: Number(env("PORT", "4000")),
-  dbPath: path.resolve(process.cwd(), env("DB_PATH", "./data/piwik-trends.db")),
+  databaseUrl: env("DATABASE_URL"),
   backfillDays: Number(env("BACKFILL_DAYS", "90")),
   fetchCron: env("FETCH_CRON", "0 6 * * *"),
   synthesisCron: env("SYNTHESIS_CRON", "0 7 * * 1"),

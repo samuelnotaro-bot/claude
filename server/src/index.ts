@@ -4,12 +4,15 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { config } from "./config.js";
+import { initSchema } from "./db.js";
 import { registerApiRoutes } from "./routes/api.js";
 import { registerBasicAuth } from "./basicAuth.js";
 import { registerStaticWeb } from "./staticWeb.js";
 import { startScheduler } from "./scheduler.js";
 import { getLatestSynthesis } from "./repo.js";
 import { backfillAll } from "./backfill.js";
+
+await initSchema();
 
 const app = Fastify({ logger: true });
 
@@ -31,14 +34,11 @@ if (fs.existsSync(webDist)) {
   registerStaticWeb(app, webDist);
 }
 
-app.listen({ port: config.port, host: "0.0.0.0" }, (err, address) => {
-  if (err) {
-    app.log.error(err);
-    process.exit(1);
-  }
+try {
+  const address = await app.listen({ port: config.port, host: "0.0.0.0" });
   app.log.info(`Piwik Trends Analyzer API listening on ${address} (mode=${config.mode})`);
   startScheduler();
-  if (!getLatestSynthesis()) {
+  if (!(await getLatestSynthesis())) {
     // First boot on a fresh deploy (e.g. a new Render service): populate history in the
     // background instead of requiring shell access to run `npm run backfill` manually.
     // The server already accepts requests while this runs; pages just show empty data
@@ -46,4 +46,7 @@ app.listen({ port: config.port, host: "0.0.0.0" }, (err, address) => {
     app.log.warn("Aucune donnée trouvée -- lancement automatique d'un backfill en arrière-plan.");
     backfillAll().catch((err) => app.log.error({ err }, "Backfill automatique au démarrage échoué"));
   }
-});
+} catch (err) {
+  app.log.error(err);
+  process.exit(1);
+}

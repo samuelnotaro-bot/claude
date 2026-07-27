@@ -38,7 +38,7 @@ export async function syncSiteRegistry(): Promise<SiteRecord[]> {
   for (const app of apps) {
     const override = overrides[app.id];
     if (override) {
-      upsertSite({
+      await upsertSite({
         id: app.id,
         name: app.name,
         continent: override as Continent,
@@ -48,7 +48,7 @@ export async function syncSiteRegistry(): Promise<SiteRecord[]> {
       continue;
     }
 
-    upsertSite({
+    await upsertSite({
       id: app.id,
       name: app.name,
       continent: businessRegionForSite(app.name),
@@ -57,7 +57,7 @@ export async function syncSiteRegistry(): Promise<SiteRecord[]> {
     });
   }
 
-  pruneSites(apps.map((app) => app.id));
+  await pruneSites(apps.map((app) => app.id));
 
   return getSites();
 }
