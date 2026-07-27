@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
-import { countryToContinent } from "./continent.js";
+import { businessRegionForSite, type Continent } from "./continent.js";
 import { upsertSite, pruneSites, getSites, type SiteRecord } from "./repo.js";
 import * as piwik from "./piwik/client.js";
-import { demoApps, demoTopCountry } from "./demoData.js";
+import { demoApps } from "./demoData.js";
 import { isAppInScope } from "./siteScope.js";
 
 const OVERRIDES_PATH = path.resolve(process.cwd(), "../config/site-overrides.json");
@@ -18,17 +18,13 @@ function loadOverrides(): Record<string, string> {
 }
 
 /**
- * Discovers all sites from Piwik Pro (or demo data) and auto-assigns each one to a
- * continent based on its dominant traffic-source country over the trailing window.
- * A manual override in config/site-overrides.json (siteId -> continent) always wins.
+ * Discovers all sites from Piwik Pro (or demo data) and assigns each one to a
+ * Socomec business region (NAM / APAC / EMEA) based on its domain name. A manual
+ * override in config/site-overrides.json (siteId -> region) always wins, for the
+ * rare exception that doesn't fit the default rule.
  */
-export async function syncSiteRegistry(lookbackDays = 90): Promise<SiteRecord[]> {
+export async function syncSiteRegistry(): Promise<SiteRecord[]> {
   const overrides = loadOverrides();
-  const to = new Date();
-  const from = new Date(to);
-  from.setDate(from.getDate() - lookbackDays);
-  const dateFrom = from.toISOString().slice(0, 10);
-  const dateTo = to.toISOString().slice(0, 10);
 
   const allApps = config.mode === "live" ? await piwik.listApps() : demoApps();
   const apps = allApps.filter(isAppInScope);
@@ -45,24 +41,19 @@ export async function syncSiteRegistry(lookbackDays = 90): Promise<SiteRecord[]>
       upsertSite({
         id: app.id,
         name: app.name,
-        continent: override as any,
+        continent: override as Continent,
         continentSource: "manual",
         detectedCountry: null,
       });
       continue;
     }
 
-    const top =
-      config.mode === "live"
-        ? await piwik.getTopCountry(app.id, dateFrom, dateTo)
-        : demoTopCountry(app.id);
-
     upsertSite({
       id: app.id,
       name: app.name,
-      continent: countryToContinent(top?.country),
+      continent: businessRegionForSite(app.name),
       continentSource: "auto",
-      detectedCountry: top?.country ?? null,
+      detectedCountry: null,
     });
   }
 

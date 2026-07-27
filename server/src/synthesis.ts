@@ -50,7 +50,7 @@ function bulletForFinding(f: Finding, siblingSessionsFinding?: Finding): string 
     if (f.direction === "down") {
       return `Taux de conversion en recul sur ${who} : ${pct(f.changePct ?? 0)}${trafficNote} → auditer le tunnel d'achat (mobile en priorité), vérifier un bug de paiement ou un changement UX récent. Action prioritaire : test utilisateur du parcours de conversion.`;
     }
-    return `Taux de conversion en hausse sur ${who} : ${pct(f.changePct ?? 0)}${trafficNote} → documenter et répliquer le changement (offre, UX, campagne) sur les autres sites du même continent.`;
+    return `Taux de conversion en hausse sur ${who} : ${pct(f.changePct ?? 0)}${trafficNote} → documenter et répliquer le changement (offre, UX, campagne) sur les autres sites de la même région.`;
   }
 
   if (f.metric === "goalConversions") {
@@ -109,7 +109,7 @@ export function generateSynthesis(
 
   if (bullets.length < 5) {
     bullets.push(
-      "Aucune anomalie majeure supplémentaire détectée cette semaine sur les sites et continents suivis → poursuivre la surveillance hebdomadaire, aucune action corrective urgente au-delà des points ci-dessus."
+      "Aucune anomalie majeure supplémentaire détectée cette semaine sur les sites et régions suivis → poursuivre la surveillance hebdomadaire, aucune action corrective urgente au-delà des points ci-dessus."
     );
   }
 

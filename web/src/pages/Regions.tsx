@@ -1,40 +1,40 @@
 import { useEffect, useState } from "react";
-import { api, type ContinentSummary, type DayPoint } from "../lib/api";
-import { ContinentBarChart } from "../components/ContinentBarChart";
+import { api, type RegionSummary, type DayPoint } from "../lib/api";
+import { RegionBarChart } from "../components/RegionBarChart";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { formatCompactNumber, formatPct } from "../lib/format";
 
-export function Continents() {
-  const [continents, setContinents] = useState<ContinentSummary[]>([]);
+export function Regions() {
+  const [regions, setRegions] = useState<RegionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [series, setSeries] = useState<DayPoint[]>([]);
 
   useEffect(() => {
-    api.continents().then((data) => {
-      setContinents(data);
-      if (data.length > 0) setSelected(data[0].continent);
+    api.regions().then((data) => {
+      setRegions(data);
+      if (data.length > 0) setSelected(data[0].region);
     });
   }, []);
 
   useEffect(() => {
     if (!selected) return;
-    api.series("continent", selected, 60).then(setSeries);
+    api.series("region", selected, 60).then(setSeries);
   }, [selected]);
 
   return (
     <div>
       <div className="card">
-        <h2>Sessions par continent (7 derniers jours)</h2>
-        <ContinentBarChart data={continents} />
+        <h2>Sessions par région business (7 derniers jours)</h2>
+        <RegionBarChart data={regions} />
       </div>
 
       <div className="card">
-        <h2>Détail par continent</h2>
+        <h2>Détail par région business</h2>
         <table className="data-table">
           <thead>
             <tr>
-              <th>Continent</th>
+              <th>Région</th>
               <th>Sites</th>
               <th>Sessions (7j)</th>
               <th>Δ vs 7j préc.</th>
@@ -44,17 +44,17 @@ export function Continents() {
             </tr>
           </thead>
           <tbody>
-            {continents.map((c) => (
-              <tr key={c.continent} onClick={() => setSelected(c.continent)} style={{ fontWeight: c.continent === selected ? 600 : 400 }}>
-                <td>{c.continent}</td>
-                <td>{c.siteCount}</td>
-                <td>{formatCompactNumber(c.sessionsLast7d)}</td>
-                <td className={c.sessionsChangePct !== null && c.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
-                  {formatPct(c.sessionsChangePct)}
+            {regions.map((r) => (
+              <tr key={r.region} onClick={() => setSelected(r.region)} style={{ fontWeight: r.region === selected ? 600 : 400 }}>
+                <td>{r.region}</td>
+                <td>{r.siteCount}</td>
+                <td>{formatCompactNumber(r.sessionsLast7d)}</td>
+                <td className={r.sessionsChangePct !== null && r.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
+                  {formatPct(r.sessionsChangePct)}
                 </td>
-                <td>{formatCompactNumber(c.conversionsLast7d)}</td>
-                <td>{(c.conversionRateLast7d * 100).toFixed(2)}%</td>
-                <td>{c.excludedAnomalyDays > 0 ? `${c.excludedAnomalyDays} exclu(s)` : "—"}</td>
+                <td>{formatCompactNumber(r.conversionsLast7d)}</td>
+                <td>{(r.conversionRateLast7d * 100).toFixed(2)}%</td>
+                <td>{r.excludedAnomalyDays > 0 ? `${r.excludedAnomalyDays} exclu(s)` : "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -65,7 +65,7 @@ export function Continents() {
         <>
           <div className="card">
             <h2>Trafic — {selected} (60 derniers jours)</h2>
-            <p className="chart-note">Point rouge = pic de trafic anormal détecté sur un des sites de ce continent (exclu des KPIs ci-dessus).</p>
+            <p className="chart-note">Point rouge = pic de trafic anormal détecté sur un des sites de cette région (exclu des KPIs ci-dessus).</p>
             <TrendChart data={series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} markAnomalies />
           </div>
           <div className="card">

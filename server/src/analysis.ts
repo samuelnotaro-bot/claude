@@ -15,7 +15,7 @@ function dateNDaysAgo(n: number): string {
 export interface AnalysisResult {
   findings: Finding[];
   siteSeries: Record<string, DayPoint[]>;
-  continentSeries: Record<string, DayPoint[]>;
+  regionSeries: Record<string, DayPoint[]>;
   globalSeries: DayPoint[];
 }
 
@@ -36,16 +36,16 @@ export function runTrendAnalysis(): AnalysisResult {
     siteSeries[site.id] = toDayPoints(clean);
   }
 
-  const continentGroups = new Map<Continent, string[]>();
+  const regionGroups = new Map<Continent, string[]>();
   for (const site of sites) {
-    const list = continentGroups.get(site.continent) ?? [];
+    const list = regionGroups.get(site.continent) ?? [];
     list.push(site.id);
-    continentGroups.set(site.continent, list);
+    regionGroups.set(site.continent, list);
   }
 
-  const continentSeries: Record<string, DayPoint[]> = {};
-  for (const [continent, siteIds] of continentGroups) {
-    continentSeries[continent] = aggregateDayPoints(siteIds.map((id) => siteRowsById[id]));
+  const regionSeries: Record<string, DayPoint[]> = {};
+  for (const [region, siteIds] of regionGroups) {
+    regionSeries[region] = aggregateDayPoints(siteIds.map((id) => siteRowsById[id]));
   }
 
   const globalSeries = aggregateDayPoints(Object.values(siteRowsById));
@@ -54,12 +54,12 @@ export function runTrendAnalysis(): AnalysisResult {
   for (const site of sites) {
     findings.push(...findTrendsForEntity(siteSeries[site.id], "site", site.id, site.name));
   }
-  for (const [continent, series] of Object.entries(continentSeries)) {
-    findings.push(...findTrendsForEntity(series, "continent", continent, continent));
+  for (const [region, series] of Object.entries(regionSeries)) {
+    findings.push(...findTrendsForEntity(series, "continent", region, region));
   }
   findings.push(...findTrendsForEntity(globalSeries, "global", "global", "Tous sites"));
 
-  return { findings: rankFindings(findings), siteSeries, continentSeries, globalSeries };
+  return { findings: rankFindings(findings), siteSeries, regionSeries, globalSeries };
 }
 
 export function runSynthesis(): void {

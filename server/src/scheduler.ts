@@ -8,7 +8,7 @@ export function startScheduler(): void {
   cron.schedule(config.fetchCron, async () => {
     try {
       console.log("[scheduler] daily fetch starting...");
-      await syncSiteRegistry(90);
+      await syncSiteRegistry();
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       await syncDay(yesterday.toISOString().slice(0, 10));

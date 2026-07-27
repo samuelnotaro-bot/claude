@@ -52,7 +52,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       return {
         id: s.id,
         name: s.name,
-        continent: s.continent,
+        region: s.continent,
         sessionsLast7d: sessions,
         sessionsChangePct: prevSessions > 0 ? (sessions - prevSessions) / prevSessions : null,
         conversionsLast7d: conversions,
@@ -62,16 +62,16 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get("/api/continents", async () => {
+  app.get("/api/regions", async () => {
     const sites = getSites();
-    const byContinent = new Map<Continent, string[]>();
+    const byRegion = new Map<Continent, string[]>();
     for (const s of sites) {
-      const list = byContinent.get(s.continent) ?? [];
+      const list = byRegion.get(s.continent) ?? [];
       list.push(s.id);
-      byContinent.set(s.continent, list);
+      byRegion.set(s.continent, list);
     }
     const result = [];
-    for (const [continent, siteIds] of byContinent) {
+    for (const [region, siteIds] of byRegion) {
       const rows: SnapshotRow[][] = [];
       let excludedAnomalyDays = 0;
       for (const id of siteIds) {
@@ -87,7 +87,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const prevSessions = sum(prev7, (p) => p.sessions);
       const conversions = sum(last7, (p) => p.goalConversions);
       result.push({
-        continent,
+        region,
         siteCount: siteIds.length,
         sessionsLast7d: sessions,
         sessionsChangePct: prevSessions > 0 ? (sessions - prevSessions) / prevSessions : null,
@@ -132,15 +132,15 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.get<{ Querystring: { scope: "site" | "continent" | "global"; id?: string; days?: string } }>(
+  app.get<{ Querystring: { scope: "site" | "region" | "global"; id?: string; days?: string } }>(
     "/api/series",
     async (req, reply) => {
       const { scope, id, days } = req.query;
       const n = days ? Number(days) : 60;
-      const [from, to] = lastNDaysRange(n);
+      const [, to] = lastNDaysRange(n);
 
       // This endpoint feeds the detail/analyst view: it intentionally returns raw,
-      // unfiltered data (unlike sites/summary, continents, overview) but flags
+      // unfiltered data (unlike sites/summary, regions, overview) but flags
       // anomalous days so the chart can highlight them instead of silently hiding them.
       const [paddedFrom] = lastNDaysRange(n + ANOMALY_BASELINE_PADDING_DAYS);
 
@@ -151,7 +151,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         return toDayPoints(raw, anomalousDates).slice(-n);
       }
       const sites = getSites();
-      const filtered = scope === "continent" ? sites.filter((s) => s.continent === id) : sites;
+      const filtered = scope === "region" ? sites.filter((s) => s.continent === id) : sites;
       const rows = filtered.map((s) => getSnapshotsForSite(s.id, paddedFrom, to));
       const anomalousDatesBySite = rows.map((r) => new Set(flagAnomalies(r).keys()));
       return aggregateDayPoints(rows, anomalousDatesBySite).slice(-n);

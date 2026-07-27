@@ -3,7 +3,7 @@ import type { PiwikApp, DailySiteMetrics, CountryBreakdown, Channel } from "./pi
 /**
  * Deterministic mock data used when PIWIK_MODE=demo, so the whole app (backfill,
  * scheduler, trend engine, dashboard) can be exercised without real Piwik Pro
- * credentials. Sites spread across 6 continents, with a few sites carrying
+ * credentials. Sites spread across the 3 business regions (NAM/APAC/EMEA), with a few sites carrying
  * deliberate trend/anomaly patterns (traffic drop, conversion divergence, channel
  * mix shift) so the trend engine and synthesis have something real to surface.
  */
@@ -32,7 +32,7 @@ const SITE_DEFS: DemoSiteDef[] = [
 
   { id: "site-jp", name: "socomec.jp", country: "JP", tier: 2400, trend: "declining" },
   { id: "site-cn", name: "socomec.cn", country: "CN", tier: 3000, trend: "flat" },
-  { id: "site-in", name: "socomec.in", country: "IN", tier: 2800, trend: "growing" },
+  { id: "site-in", name: "socomec.co.in", country: "IN", tier: 2800, trend: "growing" },
   { id: "site-kr", name: "socomec.kr", country: "KR", tier: 1300, trend: "flat" },
   { id: "site-sg", name: "socomec.sg", country: "SG", tier: 900, trend: "flat" },
 

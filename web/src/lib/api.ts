@@ -53,7 +53,7 @@ export interface Overview {
 export interface SiteSummary {
   id: string;
   name: string;
-  continent: string;
+  region: string;
   sessionsLast7d: number;
   sessionsChangePct: number | null;
   conversionsLast7d: number;
@@ -61,8 +61,8 @@ export interface SiteSummary {
   excludedAnomalyDays: number;
 }
 
-export interface ContinentSummary {
-  continent: string;
+export interface RegionSummary {
+  region: string;
   siteCount: number;
   sessionsLast7d: number;
   sessionsChangePct: number | null;
@@ -97,9 +97,9 @@ export interface Synthesis {
 export const api = {
   sites: () => get<Site[]>("/api/sites"),
   sitesSummary: () => get<SiteSummary[]>("/api/sites/summary"),
-  continents: () => get<ContinentSummary[]>("/api/continents"),
+  regions: () => get<RegionSummary[]>("/api/regions"),
   overview: () => get<Overview>("/api/overview"),
-  series: (scope: "site" | "continent" | "global", id?: string, days = 60) =>
+  series: (scope: "site" | "region" | "global", id?: string, days = 60) =>
     get<DayPoint[]>(`/api/series?scope=${scope}${id ? `&id=${encodeURIComponent(id)}` : ""}&days=${days}`),
   findings: (limit = 20) => get<Finding[]>(`/api/findings?limit=${limit}`),
   latestSynthesis: () => get<Synthesis | null>("/api/synthesis/latest"),

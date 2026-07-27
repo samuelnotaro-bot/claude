@@ -1,5 +1,5 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
-import type { ContinentSummary } from "../lib/api";
+import type { RegionSummary } from "../lib/api";
 import { formatCompactNumber } from "../lib/format";
 
 const SERIES_COLORS = [
@@ -12,14 +12,14 @@ const SERIES_COLORS = [
   "var(--series-7)",
 ];
 
-export function ContinentBarChart({ data }: { data: ContinentSummary[] }) {
+export function RegionBarChart({ data }: { data: RegionSummary[] }) {
   const sorted = [...data].sort((a, b) => b.sessionsLast7d - a.sessionsLast7d);
   return (
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={sorted} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="var(--gridline)" vertical={false} />
         <XAxis
-          dataKey="continent"
+          dataKey="region"
           tick={{ fill: "var(--text-muted)", fontSize: 11 }}
           axisLine={{ stroke: "var(--baseline)" }}
           tickLine={false}

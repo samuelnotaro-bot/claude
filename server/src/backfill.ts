@@ -6,10 +6,10 @@ import { dateRange } from "./metrics.js";
 
 export async function backfillAll(days = config.backfillDays): Promise<void> {
   console.log(`[backfill] mode=${config.mode} discovering sites...`);
-  const sites = await syncSiteRegistry(days);
+  const sites = await syncSiteRegistry();
   console.log(`[backfill] ${sites.length} sites registered:`);
   for (const s of sites) {
-    console.log(`  - ${s.name.padEnd(20)} continent=${s.continent} (${s.continentSource}, country=${s.detectedCountry ?? "n/a"})`);
+    console.log(`  - ${s.name.padEnd(20)} region=${s.continent} (${s.continentSource})`);
   }
 
   const to = new Date();

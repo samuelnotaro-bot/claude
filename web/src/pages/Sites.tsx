@@ -4,7 +4,7 @@ import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { formatCompactNumber, formatPct } from "../lib/format";
 
-type SortKey = "name" | "continent" | "sessionsLast7d" | "sessionsChangePct" | "conversionRateLast7d";
+type SortKey = "name" | "region" | "sessionsLast7d" | "sessionsChangePct" | "conversionRateLast7d";
 
 export function Sites() {
   const [sites, setSites] = useState<SiteSummary[]>([]);
@@ -52,7 +52,7 @@ export function Sites() {
           <thead>
             <tr>
               <th onClick={() => toggleSort("name")}>Site</th>
-              <th onClick={() => toggleSort("continent")}>Continent</th>
+              <th onClick={() => toggleSort("region")}>Région</th>
               <th onClick={() => toggleSort("sessionsLast7d")}>Sessions (7j)</th>
               <th onClick={() => toggleSort("sessionsChangePct")}>Δ vs 7j préc.</th>
               <th onClick={() => toggleSort("conversionRateLast7d")}>Taux de conversion</th>
@@ -63,7 +63,7 @@ export function Sites() {
             {sorted.map((s) => (
               <tr key={s.id} onClick={() => setSelected(s)} style={{ fontWeight: s.id === selected?.id ? 600 : 400 }}>
                 <td>{s.name}</td>
-                <td>{s.continent}</td>
+                <td>{s.region}</td>
                 <td>{formatCompactNumber(s.sessionsLast7d)}</td>
                 <td className={s.sessionsChangePct !== null && s.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
                   {formatPct(s.sessionsChangePct)}

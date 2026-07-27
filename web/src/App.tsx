@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Overview } from "./pages/Overview";
-import { Continents } from "./pages/Continents";
+import { Regions } from "./pages/Regions";
 import { Sites } from "./pages/Sites";
 import { Synthesis } from "./pages/Synthesis";
 
 const TABS = [
   { id: "overview", label: "Vue d'ensemble" },
-  { id: "continents", label: "Par continent" },
+  { id: "regions", label: "Business Regions" },
   { id: "sites", label: "Sites" },
   { id: "synthesis", label: "Synthèses" },
 ] as const;
@@ -22,7 +22,7 @@ export function App() {
       <header className="app-header">
         <div>
           <h1>Piwik Trends Analyzer</h1>
-          <div className="subtitle">Tendances de visibilité, trafic et conversions — sites à extension pays, par continent</div>
+          <div className="subtitle">Tendances de visibilité, trafic et conversions — sites à extension pays, par région</div>
         </div>
         <span className="mode-badge">mode : {mode}</span>
       </header>
@@ -36,7 +36,7 @@ export function App() {
       </nav>
 
       {tab === "overview" && <Overview />}
-      {tab === "continents" && <Continents />}
+      {tab === "regions" && <Regions />}
       {tab === "sites" && <Sites />}
       {tab === "synthesis" && <Synthesis />}
     </div>

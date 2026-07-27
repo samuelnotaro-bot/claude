@@ -15,6 +15,7 @@ const app = Fastify({ logger: true });
 
 if (config.dashboard.username && config.dashboard.password) {
   registerBasicAuth(app, config.dashboard.username, config.dashboard.password);
+  app.log.info(`Dashboard protégé par authentification (utilisateur: ${config.dashboard.username}).`);
 } else {
   app.log.warn("Dashboard démarré sans authentification (DASHBOARD_USERNAME/DASHBOARD_PASSWORD non renseignés).");
 }
