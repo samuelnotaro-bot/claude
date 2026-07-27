@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "sh start.sh",
     "backfill": "tsx src/backfill.ts",
     "test:connection": "tsx src/testConnection.ts",
     "seed:demo": "tsx src/seedDemo.ts",
