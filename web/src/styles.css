@@ -12,7 +12,11 @@
   --critical: #d03b3b;
   --warning: #fab219;
 
-  --series-1: #2a78d6; /* blue */
+  /* Identité de marque inspirée de socomec.fr (bleu institutionnel) -- volontairement fixe, ne change pas avec le thème clair/sombre. */
+  --brand-navy: #00335c;
+  --brand-blue: #0078bf;
+
+  --series-1: #0078bf; /* bleu socomec */
   --series-2: #eb6834; /* orange */
   --series-3: #1baf7a; /* aqua */
   --series-4: #eda100; /* yellow */
@@ -37,7 +41,7 @@
     --critical: #e66767;
     --warning: #fab219;
 
-    --series-1: #3987e5;
+    --series-1: #3d9bdb;
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
@@ -61,7 +65,7 @@
   --critical: #e66767;
   --warning: #fab219;
 
-  --series-1: #3987e5;
+  --series-1: #3d9bdb;
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
@@ -80,10 +84,26 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+.app-shell {
+  min-height: 100vh;
+  background: var(--page-plane);
+}
+
+.brand-bar {
+  background: var(--brand-navy);
+  border-bottom: 3px solid var(--brand-blue);
+}
+
 .app {
   max-width: 1280px;
   margin: 0 auto;
   padding: 24px 20px 64px;
+}
+
+.brand-bar .app-header {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 18px 20px;
 }
 
 .app-header {
@@ -91,26 +111,28 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 20px;
   flex-wrap: wrap;
 }
 
 .app-header h1 {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
   margin: 0;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .app-header .subtitle {
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.72);
   font-size: 13px;
   margin-top: 4px;
 }
 
 .mode-badge {
   font-size: 12px;
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 999px;
   padding: 4px 10px;
   white-space: nowrap;
@@ -126,12 +148,16 @@ body {
 .period-select {
   font-family: inherit;
   font-size: 13px;
-  color: var(--text-primary);
-  background: var(--surface-1);
-  border: 1px solid var(--border);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 8px;
   padding: 6px 10px;
   cursor: pointer;
+}
+
+.period-select option {
+  color: var(--text-primary);
 }
 
 .tabs {

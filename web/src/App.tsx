@@ -39,30 +39,34 @@ export function App() {
 
   return (
     <PeriodProvider>
-      <div className="app">
-        <header className="app-header">
-          <div>
-            <h1>Piwik Trends Analyzer</h1>
-            <div className="subtitle">Tendances de visibilité, trafic et conversions — sites à extension pays, par région</div>
-          </div>
-          <div className="header-controls">
-            <PeriodSelector />
-            <span className="mode-badge">mode : {mode}</span>
+      <div className="app-shell">
+        <header className="brand-bar">
+          <div className="app-header">
+            <div>
+              <h1>Piwik Trends Analyzer</h1>
+              <div className="subtitle">Tendances de visibilité, trafic et conversions — sites à extension pays, par région</div>
+            </div>
+            <div className="header-controls">
+              <PeriodSelector />
+              <span className="mode-badge">mode : {mode}</span>
+            </div>
           </div>
         </header>
 
-        <nav className="tabs">
-          {TABS.map((t) => (
-            <button key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
-              {t.label}
-            </button>
-          ))}
-        </nav>
+        <div className="app">
+          <nav className="tabs">
+            {TABS.map((t) => (
+              <button key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+                {t.label}
+              </button>
+            ))}
+          </nav>
 
-        {tab === "overview" && <Overview />}
-        {tab === "regions" && <Regions />}
-        {tab === "sites" && <Sites />}
-        {tab === "synthesis" && <Synthesis />}
+          {tab === "overview" && <Overview />}
+          {tab === "regions" && <Regions />}
+          {tab === "sites" && <Sites />}
+          {tab === "synthesis" && <Synthesis />}
+        </div>
       </div>
     </PeriodProvider>
   );
