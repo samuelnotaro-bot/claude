@@ -7,16 +7,25 @@ export interface TrendLine {
   color: string;
 }
 
+/** Marks a data point flagged as a traffic-flood anomaly (see server anomaly.ts) with a red dot instead of the usual invisible line dot. */
+function AnomalyDot({ cx, cy, payload }: { cx?: number; cy?: number; payload?: { isAnomaly?: boolean } }) {
+  if (!payload?.isAnomaly || cx === undefined || cy === undefined) return null;
+  return <circle cx={cx} cy={cy} r={4} fill="var(--critical)" stroke="var(--surface-1)" strokeWidth={1.5} />;
+}
+
 export function TrendChart({
   data,
   lines,
   valueFormatter = formatCompactNumber,
   height = 260,
+  markAnomalies = false,
 }: {
   data: Array<Record<string, unknown>>;
   lines: TrendLine[];
   valueFormatter?: (n: number) => string;
   height?: number;
+  /** Highlight days flagged as a traffic-flood anomaly (`isAnomaly` on the data points) with a red dot. */
+  markAnomalies?: boolean;
 }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -48,7 +57,7 @@ export function TrendChart({
           formatter={(value: number, name: string) => [valueFormatter(value), name]}
         />
         {lines.length > 1 && <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-secondary)" }} />}
-        {lines.map((l) => (
+        {lines.map((l, i) => (
           <Line
             key={l.dataKey}
             type="monotone"
@@ -56,7 +65,7 @@ export function TrendChart({
             name={l.label}
             stroke={l.color}
             strokeWidth={2}
-            dot={false}
+            dot={markAnomalies && i === 0 ? <AnomalyDot /> : false}
             activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--surface-1)" }}
           />
         ))}

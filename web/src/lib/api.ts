@@ -31,6 +31,8 @@ export interface DayPoint {
   conversionRate: number;
   bounceRate: number;
   channels: Record<string, number>;
+  /** Flagged as a traffic-flood anomaly (see server anomaly.ts). Only set on /api/series (raw/detail view). */
+  isAnomaly?: boolean;
 }
 
 export interface Overview {
@@ -42,6 +44,8 @@ export interface Overview {
   conversionRateLast7d: number;
   conversionRateChangePct: number | null;
   series: DayPoint[];
+  /** Days excluded from the KPIs above because they were flagged as a traffic-flood anomaly. */
+  excludedAnomalyDays: number;
 }
 
 export interface SiteSummary {
@@ -52,6 +56,7 @@ export interface SiteSummary {
   sessionsChangePct: number | null;
   conversionsLast7d: number;
   conversionRateLast7d: number;
+  excludedAnomalyDays: number;
 }
 
 export interface ContinentSummary {
@@ -61,6 +66,7 @@ export interface ContinentSummary {
   sessionsChangePct: number | null;
   conversionsLast7d: number;
   conversionRateLast7d: number;
+  excludedAnomalyDays: number;
 }
 
 export interface Finding {

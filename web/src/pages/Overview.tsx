@@ -6,6 +6,13 @@ import { ChannelMixChart } from "../components/ChannelMixChart";
 import { SynthesisPanel } from "../components/SynthesisPanel";
 import { formatCompactNumber, formatPct } from "../lib/format";
 
+const ANOMALY_TOOLTIP =
+  "Seuls les pics de trafic statistiquement extrêmes sont exclus de ce calcul. Pour une fiabilité complète, vérifiez le filtre anti-bot dans Piwik Pro > Administration > Confidentialité.";
+
+function anomalyNote(days: number): string {
+  return `${days} jour${days > 1 ? "s" : ""} de pic trafic exclu${days > 1 ? "s" : ""} ce mois-ci`;
+}
+
 export function Overview() {
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -28,12 +35,20 @@ export function Overview() {
   return (
     <div>
       <div className="kpi-grid">
-        <KpiTile label="Sessions (7 derniers jours)" value={formatCompactNumber(overview.sessionsLast7d)} deltaPct={overview.sessionsChangePct} />
+        <KpiTile
+          label="Sessions (7 derniers jours)"
+          value={formatCompactNumber(overview.sessionsLast7d)}
+          deltaPct={overview.sessionsChangePct}
+          note={overview.excludedAnomalyDays > 0 ? anomalyNote(overview.excludedAnomalyDays) : undefined}
+          noteTooltip={ANOMALY_TOOLTIP}
+        />
         <KpiTile label="Conversions (7 derniers jours)" value={formatCompactNumber(overview.conversionsLast7d)} deltaPct={overview.conversionsChangePct} />
         <KpiTile
           label="Taux de conversion global"
           value={`${(overview.conversionRateLast7d * 100).toFixed(2)}%`}
           deltaPct={overview.conversionRateChangePct}
+          note={overview.excludedAnomalyDays > 0 ? anomalyNote(overview.excludedAnomalyDays) : undefined}
+          noteTooltip={ANOMALY_TOOLTIP}
         />
         <KpiTile label="Sites suivis" value={String(overview.siteCount)} deltaPct={null} />
       </div>

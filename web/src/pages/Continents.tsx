@@ -40,6 +40,7 @@ export function Continents() {
               <th>Δ vs 7j préc.</th>
               <th>Conversions (7j)</th>
               <th>Taux de conversion</th>
+              <th title="Jours de pic trafic anormal exclus du calcul ci-dessus, sur les 30 derniers jours">Anomalies</th>
             </tr>
           </thead>
           <tbody>
@@ -53,6 +54,7 @@ export function Continents() {
                 </td>
                 <td>{formatCompactNumber(c.conversionsLast7d)}</td>
                 <td>{(c.conversionRateLast7d * 100).toFixed(2)}%</td>
+                <td>{c.excludedAnomalyDays > 0 ? `${c.excludedAnomalyDays} exclu(s)` : "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -63,7 +65,8 @@ export function Continents() {
         <>
           <div className="card">
             <h2>Trafic — {selected} (60 derniers jours)</h2>
-            <TrendChart data={series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} />
+            <p className="chart-note">Point rouge = pic de trafic anormal détecté sur un des sites de ce continent (exclu des KPIs ci-dessus).</p>
+            <TrendChart data={series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} markAnomalies />
           </div>
           <div className="card">
             <h2>Canaux d'acquisition — {selected}</h2>

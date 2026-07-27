@@ -1,5 +1,6 @@
 import { getSites, getSnapshotsForSite, saveSynthesis } from "./repo.js";
 import { toDayPoints, aggregateDayPoints, findTrendsForEntity, rankFindings, type Finding, type DayPoint } from "./trends.js";
+import { excludeAnomalies } from "./anomaly.js";
 import { generateSynthesis } from "./synthesis.js";
 import type { Continent } from "./continent.js";
 
@@ -26,9 +27,13 @@ export function runTrendAnalysis(): AnalysisResult {
   const siteSeries: Record<string, DayPoint[]> = {};
   const siteRowsById: Record<string, ReturnType<typeof getSnapshotsForSite>> = {};
   for (const site of sites) {
-    const rows = getSnapshotsForSite(site.id, dateFrom, dateTo);
-    siteRowsById[site.id] = rows;
-    siteSeries[site.id] = toDayPoints(rows);
+    const rawRows = getSnapshotsForSite(site.id, dateFrom, dateTo);
+    // Trend detection and the weekly synthesis must never mistake a traffic-flood
+    // anomaly for a real trend -- see anomaly.ts for why (Piwik Pro's own bot
+    // detection never fires on this data).
+    const { clean } = excludeAnomalies(rawRows);
+    siteRowsById[site.id] = clean;
+    siteSeries[site.id] = toDayPoints(clean);
   }
 
   const continentGroups = new Map<Continent, string[]>();

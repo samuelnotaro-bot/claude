@@ -10,6 +10,8 @@ export interface DayPoint {
   conversionRate: number;
   bounceRate: number;
   channels: Record<Channel, number>;
+  /** True when this day (or, for an aggregate point, at least one contributing site) was flagged as a traffic-flood anomaly. See anomaly.ts. */
+  isAnomaly?: boolean;
 }
 
 export type Scope = "site" | "continent" | "global";
@@ -35,7 +37,7 @@ const METRIC_LABELS: Record<Finding["metric"], string> = {
   channelMix: "répartition des canaux d'acquisition",
 };
 
-export function toDayPoints(rows: SnapshotRow[]): DayPoint[] {
+export function toDayPoints(rows: SnapshotRow[], anomalousDates?: Set<string>): DayPoint[] {
   return rows.map((r) => ({
     date: r.date,
     sessions: r.sessions,
@@ -45,13 +47,19 @@ export function toDayPoints(rows: SnapshotRow[]): DayPoint[] {
     conversionRate: r.sessions > 0 ? r.goalConversions / r.sessions : 0,
     bounceRate: r.bounceRate,
     channels: r.channels,
+    isAnomaly: anomalousDates?.has(r.date) ?? false,
   }));
 }
 
-/** Merges same-date rows from multiple sites into continent/global daily points. */
-export function aggregateDayPoints(rowsBySite: SnapshotRow[][]): DayPoint[] {
+/**
+ * Merges same-date rows from multiple sites into continent/global daily points.
+ * `anomalousDatesBySite`, when given, must be index-aligned with `rowsBySite`; an
+ * aggregate point is marked `isAnomaly` if any contributing site was flagged that day.
+ */
+export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBySite?: (Set<string> | undefined)[]): DayPoint[] {
   const byDate = new Map<string, DayPoint>();
-  for (const rows of rowsBySite) {
+  rowsBySite.forEach((rows, siteIndex) => {
+    const anomalousDates = anomalousDatesBySite?.[siteIndex];
     for (const r of rows) {
       const existing = byDate.get(r.date);
       const base: DayPoint = existing ?? {
@@ -63,6 +71,7 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][]): DayPoint[] {
         conversionRate: 0,
         bounceRate: 0,
         channels: { organic: 0, direct: 0, referral: 0, paid: 0, social: 0, email: 0, other: 0 },
+        isAnomaly: false,
       };
       base.sessions += r.sessions;
       base.users += r.users;
@@ -71,9 +80,10 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][]): DayPoint[] {
       for (const ch of Object.keys(base.channels) as Channel[]) {
         base.channels[ch] += r.channels[ch];
       }
+      if (anomalousDates?.has(r.date)) base.isAnomaly = true;
       byDate.set(r.date, base);
     }
-  }
+  });
   const points = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
   for (const p of points) p.conversionRate = p.sessions > 0 ? p.goalConversions / p.sessions : 0;
   return points;
