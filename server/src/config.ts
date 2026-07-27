@@ -21,10 +21,21 @@ export const config = {
   backfillDays: Number(env("BACKFILL_DAYS", "90")),
   fetchCron: env("FETCH_CRON", "0 6 * * *"),
   synthesisCron: env("SYNTHESIS_CRON", "0 7 * * 1"),
+  dashboard: {
+    username: process.env.DASHBOARD_USERNAME ?? "",
+    password: process.env.DASHBOARD_PASSWORD ?? "",
+  },
 };
 
 if (config.mode === "live" && (!config.piwik.baseUrl || !config.piwik.clientId || !config.piwik.clientSecret)) {
   throw new Error(
     "PIWIK_MODE=live requires PIWIK_BASE_URL, PIWIK_CLIENT_ID and PIWIK_CLIENT_SECRET to be set."
+  );
+}
+
+if (config.mode === "live" && (!config.dashboard.username || !config.dashboard.password)) {
+  console.warn(
+    "[config] PIWIK_MODE=live mais DASHBOARD_USERNAME/DASHBOARD_PASSWORD ne sont pas renseignés -- " +
+      "le dashboard sera accessible publiquement avec de vraies données de trafic. Renseignez les deux pour le protéger."
   );
 }

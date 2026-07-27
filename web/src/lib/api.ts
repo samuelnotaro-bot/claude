@@ -1,4 +1,6 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+// Empty string = same-origin (the production build, served by the API server itself).
+// Set VITE_API_BASE_URL=http://localhost:4000 for local dev (`npm run dev:web` on its own port).
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`);
