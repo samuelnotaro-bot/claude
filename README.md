@@ -93,11 +93,14 @@ vérifier les identifiants et la règle de filtrage avant de lancer un
    production) démarre l'API **et** le planificateur (fetch quotidien + synthèse
    hebdomadaire, horaires réglables via `FETCH_CRON` / `SYNTHESIS_CRON`).
 
-> Les identifiants de champ (`COLUMN_IDS` dans `server/src/piwik/client.ts`)
-> suivent la documentation publique de l'API Piwik Pro (developers.piwik.pro).
-> Piwik Pro fait parfois évoluer les identifiants de colonnes entre versions —
-> si `npm run backfill` renvoie des métriques à zéro en mode live, vérifiez les
-> noms de colonnes dans l'API Explorer de votre organisation et ajustez ce fichier.
+> Les identifiants de colonnes (`COLUMN_IDS` dans `server/src/piwik/client.ts`)
+> ont été vérifiés contre l'organisation Piwik Pro réelle : `sessions`,
+> `visitors`, `page_views`, `goal_conversions`, `bounce_rate`, dimension pays
+> `location_country_name` (renvoie un tuple `[code_iso, nom]`), dimension canal
+> `medium`. La durée moyenne de session (`avgSessionDurationSec`) reste à 0 :
+> aucun `column_id` valide n'a été trouvé après une recherche exhaustive — à
+> confirmer auprès du support Piwik Pro ou de l'API Explorer si cette métrique
+> est nécessaire.
 
 ## Rattachement manuel d'un continent
 
