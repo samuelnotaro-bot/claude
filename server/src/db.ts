@@ -60,5 +60,18 @@ export async function initSchema(): Promise<void> {
       bullets TEXT NOT NULL,
       highlights TEXT NOT NULL
     );
+
+    -- Latest geo-mismatch check result per site (see geoMismatch.ts). Rewritten
+    -- wholesale on each check: only sites currently showing a mismatch appear here.
+    CREATE TABLE IF NOT EXISTS geo_mismatches (
+      site_id TEXT PRIMARY KEY,
+      site_name TEXT NOT NULL,
+      expected_label TEXT NOT NULL,
+      expected_share DOUBLE PRECISION NOT NULL,
+      top_unexpected_country TEXT NOT NULL,
+      top_unexpected_share DOUBLE PRECISION NOT NULL,
+      total_sessions INTEGER NOT NULL,
+      checked_at TEXT NOT NULL
+    );
   `);
 }

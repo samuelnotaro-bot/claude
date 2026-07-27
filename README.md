@@ -169,9 +169,28 @@ bruit de fond de trafic non-humain à un niveau plus faible, sous le seuil de
 détection, reste inclus dans les KPIs. La solution durable est de vérifier le
 filtre anti-bot dans Piwik Pro (Administration > Confidentialité).
 
+## Détection des écarts de géolocalisation
+
+Chaque site à extension pays a un pays attendu (déduit de son ccTLD, ex.
+`socomec.co.uk` → GB). Un contrôle hebdomadaire (`geoMismatch.ts`, lancé avec
+la synthèse périodique, ou à la demande via le bouton "Vérifier maintenant"
+sur la vue d'ensemble) compare la répartition réelle des visiteurs par pays
+(30 derniers jours) à ce pays attendu, et signale un site quand un seul pays
+inattendu dépasse 15 % du trafic (ex : trafic indien important sur le site UK).
+
+Les deux sites régionaux multi-pays (`emea.socomec.com`, `apac.socomec.com`)
+suivent une règle plus large plutôt qu'un pays unique :
+- `apac.socomec.com` : trafic attendu = Asie, hors Chine et Inde (qui ont déjà
+  leur propre site pays).
+- `emea.socomec.com` : trafic attendu = Europe / Afrique / Moyen-Orient, hors
+  tout pays ayant déjà son propre site pays dédié.
+
+**Limite connue** : classification géographique par regroupements de pays
+volontairement simples (pas une source géopolitique faisant autorité), et
+seuil fixe (15 %) plutôt qu'ajusté par site.
+
 ## Limites connues / prochaines étapes possibles
 
-- Pas de canal d'alerte (email/Slack) pour l'instant — la synthèse est
-  consultable dans le dashboard, à la demande de l'utilisateur.
-- Pas de détection des écarts géographiques (ex : trafic indien important sur
-  le site UK) — piste identifiée, pas encore implémentée.
+- Pas de canal d'alerte (email/Slack) pour l'instant — la synthèse et les
+  écarts de géolocalisation sont consultables dans le dashboard, à la demande
+  de l'utilisateur.

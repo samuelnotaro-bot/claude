@@ -103,6 +103,16 @@ export interface Synthesis {
   highlights: Record<string, unknown>;
 }
 
+export interface GeoMismatch {
+  siteId: string;
+  siteName: string;
+  expectedLabel: string;
+  expectedShare: number;
+  topUnexpectedCountry: string;
+  topUnexpectedShare: number;
+  totalSessions: number;
+}
+
 export const api = {
   sites: () => get<Site[]>("/api/sites"),
   sitesSummary: (days: PeriodDays = 7) => get<SiteSummary[]>(`/api/sites/summary?days=${days}`),
@@ -114,4 +124,6 @@ export const api = {
   latestSynthesis: () => get<Synthesis | null>("/api/synthesis/latest"),
   synthesisHistory: (limit = 20) => get<Synthesis[]>(`/api/synthesis/history?limit=${limit}`),
   generateSynthesis: () => post<Synthesis | null>("/api/synthesis/generate"),
+  geoMismatches: () => get<GeoMismatch[]>("/api/geo-mismatches"),
+  checkGeoMismatches: () => post<GeoMismatch[]>("/api/geo-mismatches/check"),
 };

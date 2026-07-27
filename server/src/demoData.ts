@@ -82,10 +82,51 @@ export function demoApps(): PiwikApp[] {
   }));
 }
 
-export function demoTopCountry(siteId: string): CountryBreakdown | null {
+const ALL_DEMO_COUNTRIES = [...new Set(SITE_DEFS.map((s) => s.country)), "IN"];
+
+/**
+ * Full visitor-country breakdown for a demo site over its recent traffic, mostly
+ * dominated by its home country. socomec.co.uk deliberately carries a large,
+ * unexpected India share so the geo-mismatch detector (geoMismatch.ts) has a
+ * real case to catch -- mirroring the exact scenario reported for the real site.
+ */
+export function demoCountryBreakdown(siteId: string): CountryBreakdown[] {
   const def = SITE_DEFS.find((s) => s.id === siteId);
-  if (!def) return null;
-  return { country: def.country, sessions: def.tier * 30 };
+  if (!def) return [];
+  const rng = mulberry32(hashStr(siteId + "geo"));
+  const totalSessions = def.tier * 30;
+
+  // Regional multi-country sites: give them a distribution that already fits
+  // their expected-region rule (see geoMismatch.ts) -- Asia excluding CN/IN for
+  // apac, EMEA countries without their own dedicated site for emea -- so
+  // socomec.co.uk stays the single deliberate example below.
+  if (siteId === "site-emea") return distributeAcross(totalSessions, ["BE", "CH", "AT", "PT", "AE", "SA", "GR"], rng);
+  if (siteId === "site-apac") return distributeAcross(totalSessions, ["TH", "VN", "MY", "ID", "PH", "TW"], rng);
+
+  const isMismatchDemo = siteId === "site-gb";
+  const homeShare = isMismatchDemo ? 0.42 : 0.7 + rng() * 0.15;
+  const mismatchShare = isMismatchDemo ? 0.31 : 0;
+
+  const rows: CountryBreakdown[] = [{ country: def.country, sessions: Math.round(totalSessions * homeShare) }];
+  if (mismatchShare > 0) rows.push({ country: "IN", sessions: Math.round(totalSessions * mismatchShare) });
+
+  let remaining = Math.max(0, 1 - homeShare - mismatchShare);
+  const others = ALL_DEMO_COUNTRIES.filter((c) => c !== def.country && c !== (isMismatchDemo ? "IN" : ""));
+  for (const c of others) {
+    if (remaining <= 0.01) break;
+    const share = remaining * rng() * 0.35;
+    rows.push({ country: c, sessions: Math.round(totalSessions * share) });
+    remaining -= share;
+  }
+  return rows.filter((r) => r.sessions > 0).sort((a, b) => b.sessions - a.sessions);
+}
+
+function distributeAcross(totalSessions: number, countries: string[], rng: () => number): CountryBreakdown[] {
+  const weights = countries.map(() => 0.4 + rng() * 0.6);
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  return countries
+    .map((country, i) => ({ country, sessions: Math.round((totalSessions * weights[i]) / totalWeight) }))
+    .sort((a, b) => b.sessions - a.sessions);
 }
 
 const CHANNEL_WEIGHTS: Record<Channel, number> = {

@@ -4,6 +4,7 @@ import { syncSiteRegistry } from "./siteRegistry.js";
 import { syncDay } from "./sync.js";
 import { runSynthesis } from "./analysis.js";
 import { dateRange } from "./metrics.js";
+import { checkGeoMismatches } from "./geoMismatch.js";
 
 export async function backfillAll(days = config.backfillDays): Promise<void> {
   await initSchema();
@@ -31,6 +32,8 @@ export async function backfillAll(days = config.backfillDays): Promise<void> {
 
   console.log("[backfill] generating initial synthesis...");
   await runSynthesis();
+  console.log("[backfill] checking geo mismatches...");
+  await checkGeoMismatches();
   console.log("[backfill] done.");
 }
 

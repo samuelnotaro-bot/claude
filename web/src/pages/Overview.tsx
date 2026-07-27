@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { api, type Overview as OverviewData, type Finding, type Synthesis } from "../lib/api";
+import { api, type Overview as OverviewData, type Finding, type Synthesis, type GeoMismatch } from "../lib/api";
 import { KpiTile } from "../components/KpiTile";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { SynthesisPanel } from "../components/SynthesisPanel";
+import { GeoMismatchPanel } from "../components/GeoMismatchPanel";
 import { formatCompactNumber, formatPct } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
@@ -19,17 +20,29 @@ export function Overview() {
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [synthesis, setSynthesis] = useState<Synthesis | null>(null);
+  const [geoMismatches, setGeoMismatches] = useState<GeoMismatch[]>([]);
+  const [checkingGeo, setCheckingGeo] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([api.overview(days), api.findings(6), api.latestSynthesis()])
-      .then(([o, f, s]) => {
+    Promise.all([api.overview(days), api.findings(6), api.latestSynthesis(), api.geoMismatches()])
+      .then(([o, f, s, g]) => {
         setOverview(o);
         setFindings(f);
         setSynthesis(s);
+        setGeoMismatches(g);
       })
       .catch((e) => setError(String(e)));
   }, [days]);
+
+  async function handleCheckGeo() {
+    setCheckingGeo(true);
+    try {
+      setGeoMismatches(await api.checkGeoMismatches());
+    } finally {
+      setCheckingGeo(false);
+    }
+  }
 
   if (error) return <p className="empty-state">Erreur de chargement : {error}. Le serveur API tourne-t-il sur le bon port ?</p>;
   if (!overview) return <p className="empty-state">Chargement…</p>;
@@ -79,6 +92,21 @@ export function Overview() {
           deltaPct={overview.downloadsChangePct}
           deltaLabel={deltaLabel}
         />
+      </div>
+
+      <div className="card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <h2 style={{ marginBottom: 4 }}>Cohérence géographique du trafic</h2>
+            <p className="card-subtitle" style={{ margin: 0 }}>
+              Alerte si une part importante du trafic d'un site vient d'un pays inattendu (ex. trafic Inde sur le site UK).
+            </p>
+          </div>
+          <button className="primary-btn" onClick={handleCheckGeo} disabled={checkingGeo}>
+            {checkingGeo ? "Vérification…" : "Vérifier maintenant"}
+          </button>
+        </div>
+        <GeoMismatchPanel mismatches={geoMismatches} />
       </div>
 
       <div className="grid-2">

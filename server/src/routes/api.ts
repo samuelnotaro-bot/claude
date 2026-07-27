@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { getSites, getSnapshotsForSite, getLatestSynthesis, getSynthesisHistory, type SnapshotRow } from "../repo.js";
+import { getSites, getSnapshotsForSite, getLatestSynthesis, getSynthesisHistory, getGeoMismatches, type SnapshotRow } from "../repo.js";
 import { runTrendAnalysis, runSynthesis } from "../analysis.js";
 import { toDayPoints, aggregateDayPoints } from "../trends.js";
 import { excludeAnomalies, flagAnomalies } from "../anomaly.js";
+import { checkGeoMismatches } from "../geoMismatch.js";
 import type { Continent } from "../continent.js";
 
 function lastNDaysRange(n: number): [string, string] {
@@ -205,5 +206,13 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/synthesis/generate", async () => {
     await runSynthesis();
     return getLatestSynthesis();
+  });
+
+  app.get("/api/geo-mismatches", async () => {
+    return getGeoMismatches();
+  });
+
+  app.post("/api/geo-mismatches/check", async () => {
+    return checkGeoMismatches();
   });
 }

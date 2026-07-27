@@ -183,3 +183,50 @@ function rowToSynthesis(r: any): SynthesisRecord {
     highlights: JSON.parse(r.highlights),
   };
 }
+
+export interface GeoMismatchRecord {
+  siteId: string;
+  siteName: string;
+  /** Human-readable description of the traffic origin expected for this site (a single country, or a region for emea./apac.socomec.com). */
+  expectedLabel: string;
+  expectedShare: number;
+  topUnexpectedCountry: string;
+  topUnexpectedShare: number;
+  totalSessions: number;
+}
+
+/** Replaces the whole table with the latest check's findings (see geoMismatch.ts). */
+export async function saveGeoMismatches(mismatches: GeoMismatchRecord[]): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM geo_mismatches");
+    const checkedAt = new Date().toISOString();
+    for (const m of mismatches) {
+      await client.query(
+        `INSERT INTO geo_mismatches (site_id, site_name, expected_label, expected_share, top_unexpected_country, top_unexpected_share, total_sessions, checked_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [m.siteId, m.siteName, m.expectedLabel, m.expectedShare, m.topUnexpectedCountry, m.topUnexpectedShare, m.totalSessions, checkedAt]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getGeoMismatches(): Promise<GeoMismatchRecord[]> {
+  const { rows } = await pool.query(`SELECT * FROM geo_mismatches ORDER BY top_unexpected_share DESC`);
+  return rows.map((r) => ({
+    siteId: r.site_id,
+    siteName: r.site_name,
+    expectedLabel: r.expected_label,
+    expectedShare: r.expected_share,
+    topUnexpectedCountry: r.top_unexpected_country,
+    topUnexpectedShare: r.top_unexpected_share,
+    totalSessions: r.total_sessions,
+  }));
+}

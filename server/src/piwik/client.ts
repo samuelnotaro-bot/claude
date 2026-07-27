@@ -237,23 +237,23 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
   };
 }
 
-export async function getTopCountry(siteId: string, dateFrom: string, dateTo: string): Promise<CountryBreakdown | null> {
+/** Full visitor-country breakdown (sessions per ISO country code) for a site over a date range, sorted descending. Used by geoMismatch.ts. */
+export async function getCountryBreakdown(siteId: string, dateFrom: string, dateTo: string): Promise<CountryBreakdown[]> {
   const rows = await queryAnalytics({
     website_id: siteId,
     date_from: dateFrom,
     date_to: dateTo,
     columns: [{ column_id: COLUMN_IDS.countryDimension }, { column_id: COLUMN_IDS.sessions }],
   });
-  if (rows.length === 0) return null;
-  const sorted = rows
+  return rows
     .map((r) => {
       const value = r[COLUMN_IDS.countryDimension];
       const isoCode = Array.isArray(value) ? value[0] : value;
       return {
-        country: String(isoCode ?? ""),
+        country: String(isoCode ?? "").toUpperCase(),
         sessions: Number(r[COLUMN_IDS.sessions] ?? 0),
       };
     })
+    .filter((c) => c.country)
     .sort((a, b) => b.sessions - a.sessions);
-  return sorted[0] ?? null;
 }
