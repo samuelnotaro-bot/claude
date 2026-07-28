@@ -437,6 +437,46 @@ button.primary-btn:disabled {
   cursor: default;
 }
 
+button.secondary-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: transparent;
+  color: var(--brand-navy);
+  border: 1.5px solid var(--brand-navy);
+  border-radius: 999px;
+  padding: 9px 18px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+button.secondary-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand-navy) 8%, transparent);
+}
+
+button.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) button.secondary-btn { color: #ffffff; border-color: #ffffff; }
+  :root:where(:not([data-theme="light"])) button.secondary-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+}
+:root[data-theme="dark"] button.secondary-btn { color: #ffffff; border-color: #ffffff; }
+:root[data-theme="dark"] button.secondary-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+
+.period-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
 .backfill-banner {
   background: color-mix(in srgb, var(--warning) 14%, var(--surface-1));
   border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);

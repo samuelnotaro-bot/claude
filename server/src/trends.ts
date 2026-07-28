@@ -13,15 +13,30 @@ export interface DayPoint {
   rfqConversions: number;
   supportConversions: number;
   downloads: number;
-  aiReferralSessions: number;
-  organicBounces: number;
-  directBounces: number;
-  searchConsoleClicks: number;
-  searchConsoleImpressions: number;
+  /**
+   * These 5 fields come from Piwik Pro queries that can fail independently of
+   * the core metrics above (wrong/unsupported column, an integration like GSC
+   * not configured for a given site, ...) -- see piwik/client.ts. `null` means
+   * "not available", distinct from a confirmed `0`, so the UI can show "non
+   * disponible" instead of a misleading zero. Aggregation treats null as "no
+   * contribution" and only produces a null total when *every* contributing
+   * point is null (see addNullable below).
+   */
+  aiReferralSessions: number | null;
+  organicBounces: number | null;
+  directBounces: number | null;
+  searchConsoleClicks: number | null;
+  searchConsoleImpressions: number | null;
   /** True when this day (or, for an aggregate point, at least one contributing site) was flagged as a traffic-flood anomaly. See anomaly.ts. */
   isAnomaly?: boolean;
   /** True when this date has no underlying snapshot row at all (zero-filled -- see zeroFillDayPoints). Lets the UI/validity checks tell "genuinely zero traffic" apart from "no data collected that day". */
   isMissing?: boolean;
+}
+
+/** Sums two optional (Piwik-integration-dependent) values, staying null only when both sides are null -- see the DayPoint doc comment above. */
+function addNullable(a: number | null, b: number | null): number | null {
+  if (a === null && b === null) return null;
+  return (a ?? 0) + (b ?? 0);
 }
 
 export type Scope = "site" | "continent" | "global";
@@ -34,7 +49,10 @@ export type FindingMetric =
   | "organicSessions"
   | "aiReferralSessions"
   | "lowEngagementShare"
-  | "searchConsoleClicks";
+  | "searchConsoleClicks"
+  | "rfq"
+  | "support"
+  | "downloads";
 
 export interface Finding {
   scope: Scope;
@@ -50,7 +68,7 @@ export interface Finding {
   detail?: string; // extra context, e.g. which channel shifted
 }
 
-const METRIC_LABELS: Record<FindingMetric, string> = {
+export const METRIC_LABELS: Record<FindingMetric, string> = {
   sessions: "trafic (sessions)",
   conversionRate: "taux de conversion",
   goalConversions: "conversions",
@@ -59,6 +77,9 @@ const METRIC_LABELS: Record<FindingMetric, string> = {
   aiReferralSessions: "trafic référé par des IA",
   lowEngagementShare: "part de trafic à faible engagement (signal bot)",
   searchConsoleClicks: "clics Search Console",
+  rfq: "demandes de devis",
+  support: "demandes de support",
+  downloads: "téléchargements",
 };
 
 export function toDayPoints(rows: SnapshotRow[], anomalousDates?: Set<string>): DayPoint[] {
@@ -96,11 +117,13 @@ function emptyDayPoint(date: string): DayPoint {
     rfqConversions: 0,
     supportConversions: 0,
     downloads: 0,
-    aiReferralSessions: 0,
-    organicBounces: 0,
-    directBounces: 0,
-    searchConsoleClicks: 0,
-    searchConsoleImpressions: 0,
+    // null, not 0: a zero-filled/missing day has no data at all, it isn't a
+    // confirmed zero for these optional metrics either (see DayPoint above).
+    aiReferralSessions: null,
+    organicBounces: null,
+    directBounces: null,
+    searchConsoleClicks: null,
+    searchConsoleImpressions: null,
     isAnomaly: false,
     isMissing: true,
   };
@@ -152,11 +175,11 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
         rfqConversions: 0,
         supportConversions: 0,
         downloads: 0,
-        aiReferralSessions: 0,
-        organicBounces: 0,
-        directBounces: 0,
-        searchConsoleClicks: 0,
-        searchConsoleImpressions: 0,
+        aiReferralSessions: null,
+        organicBounces: null,
+        directBounces: null,
+        searchConsoleClicks: null,
+        searchConsoleImpressions: null,
         isAnomaly: false,
       };
       base.sessions += r.sessions;
@@ -166,11 +189,11 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
       base.rfqConversions += r.rfqConversions;
       base.supportConversions += r.supportConversions;
       base.downloads += r.downloads;
-      base.aiReferralSessions += r.aiReferralSessions;
-      base.organicBounces += r.organicBounces;
-      base.directBounces += r.directBounces;
-      base.searchConsoleClicks += r.searchConsoleClicks;
-      base.searchConsoleImpressions += r.searchConsoleImpressions;
+      base.aiReferralSessions = addNullable(base.aiReferralSessions, r.aiReferralSessions);
+      base.organicBounces = addNullable(base.organicBounces, r.organicBounces);
+      base.directBounces = addNullable(base.directBounces, r.directBounces);
+      base.searchConsoleClicks = addNullable(base.searchConsoleClicks, r.searchConsoleClicks);
+      base.searchConsoleImpressions = addNullable(base.searchConsoleImpressions, r.searchConsoleImpressions);
       for (const ch of Object.keys(base.channels) as Channel[]) {
         base.channels[ch] += r.channels[ch];
       }
@@ -207,11 +230,11 @@ export function aggregateDayPointSeries(seriesBySite: DayPoint[][]): DayPoint[] 
       base.rfqConversions += p.rfqConversions;
       base.supportConversions += p.supportConversions;
       base.downloads += p.downloads;
-      base.aiReferralSessions += p.aiReferralSessions;
-      base.organicBounces += p.organicBounces;
-      base.directBounces += p.directBounces;
-      base.searchConsoleClicks += p.searchConsoleClicks;
-      base.searchConsoleImpressions += p.searchConsoleImpressions;
+      base.aiReferralSessions = addNullable(base.aiReferralSessions, p.aiReferralSessions);
+      base.organicBounces = addNullable(base.organicBounces, p.organicBounces);
+      base.directBounces = addNullable(base.directBounces, p.directBounces);
+      base.searchConsoleClicks = addNullable(base.searchConsoleClicks, p.searchConsoleClicks);
+      base.searchConsoleImpressions = addNullable(base.searchConsoleImpressions, p.searchConsoleImpressions);
       for (const ch of Object.keys(base.channels) as Channel[]) base.channels[ch] += p.channels[ch];
       if (p.isAnomaly) base.isAnomaly = true;
     }
@@ -336,7 +359,8 @@ function detectChannelMixShift(
 }
 
 function lowEngagementShare(p: DayPoint): number {
-  return p.sessions > 0 ? (p.organicBounces + p.directBounces) / p.sessions : 0;
+  if (p.organicBounces === null && p.directBounces === null) return 0;
+  return p.sessions > 0 ? ((p.organicBounces ?? 0) + (p.directBounces ?? 0)) / p.sessions : 0;
 }
 
 export function findTrendsForEntity(
@@ -351,9 +375,9 @@ export function findTrendsForEntity(
   const goals = detectMetricTrend(points, (p) => p.goalConversions, "goalConversions", scope, entityId, entityName, 0.15);
   const channelShift = detectChannelMixShift(points, scope, entityId, entityName);
   const organic = detectMetricTrend(points, (p) => p.channels.organic, "organicSessions", scope, entityId, entityName, 0.15);
-  const aiReferral = detectMetricTrend(points, (p) => p.aiReferralSessions, "aiReferralSessions", scope, entityId, entityName, 0.2);
+  const aiReferral = detectMetricTrend(points, (p) => p.aiReferralSessions ?? 0, "aiReferralSessions", scope, entityId, entityName, 0.2);
   const botSignal = detectMetricTrend(points, lowEngagementShare, "lowEngagementShare", scope, entityId, entityName, 0.15);
-  const gscClicks = detectMetricTrend(points, (p) => p.searchConsoleClicks, "searchConsoleClicks", scope, entityId, entityName, 0.15);
+  const gscClicks = detectMetricTrend(points, (p) => p.searchConsoleClicks ?? 0, "searchConsoleClicks", scope, entityId, entityName, 0.15);
   for (const f of [traffic, conv, goals, channelShift, organic, aiReferral, botSignal, gscClicks]) if (f) findings.push(f);
   return findings;
 }

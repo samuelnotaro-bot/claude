@@ -115,11 +115,12 @@ export interface SnapshotRow {
   rfqConversions: number;
   supportConversions: number;
   downloads: number;
-  aiReferralSessions: number;
-  organicBounces: number;
-  directBounces: number;
-  searchConsoleClicks: number;
-  searchConsoleImpressions: number;
+  /** null = not fetched (query failure/integration not configured), distinct from a confirmed 0 -- see piwik/types.ts. */
+  aiReferralSessions: number | null;
+  organicBounces: number | null;
+  directBounces: number | null;
+  searchConsoleClicks: number | null;
+  searchConsoleImpressions: number | null;
 }
 
 export async function getSnapshots(dateFrom: string, dateTo: string): Promise<SnapshotRow[]> {
@@ -166,6 +167,28 @@ export async function getEarliestSnapshotDate(): Promise<string | null> {
 export async function getLatestSnapshotDate(): Promise<string | null> {
   const { rows } = await pool.query(`SELECT MAX(date) AS latest FROM site_snapshots`);
   return rows[0]?.latest ?? null;
+}
+
+/**
+ * Which dates each site actually has a snapshot for, within a range -- a
+ * single lightweight query (dates only, no metric columns) used to find gaps
+ * *inside* the existing history (see sync.ts#backfillGaps), not just missing
+ * days at the tail end. A cron run skipped mid-history (e.g. the process was
+ * asleep, or a deploy briefly broke the Piwik connection) otherwise stays a
+ * silent hole forever, which is what made some periods show no data at all
+ * and made period-over-period comparisons look unreliable.
+ */
+export async function getSnapshotDatesBySite(siteIds: string[], dateFrom: string, dateTo: string): Promise<Map<string, Set<string>>> {
+  const byId = new Map<string, Set<string>>(siteIds.map((id) => [id, new Set()]));
+  if (siteIds.length === 0) return byId;
+  const { rows } = await pool.query(
+    `SELECT site_id, date FROM site_snapshots WHERE site_id = ANY($1) AND date BETWEEN $2 AND $3`,
+    [siteIds, dateFrom, dateTo]
+  );
+  for (const r of rows) {
+    byId.get(r.site_id)?.add(r.date);
+  }
+  return byId;
 }
 
 function rowToSnapshot(r: any): SnapshotRow {

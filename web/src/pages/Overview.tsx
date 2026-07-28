@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { api, type Overview as OverviewData, type Finding, type Synthesis } from "../lib/api";
+import { api, type Overview as OverviewData } from "../lib/api";
 import { KpiTile } from "../components/KpiTile";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
-import { SynthesisPanel } from "../components/SynthesisPanel";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 const ANOMALY_TOOLTIP =
@@ -18,20 +17,35 @@ function anomalyNote(days: number): string {
 export function Overview() {
   const { queryParams, compare, from, to } = usePeriod();
   const [overview, setOverview] = useState<OverviewData | null>(null);
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [synthesis, setSynthesis] = useState<Synthesis | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fillingGaps, setFillingGaps] = useState(false);
+  const [gapMessage, setGapMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setError(null);
-    Promise.all([api.overview(queryParams), api.findings(8), api.latestSynthesis()])
-      .then(([o, f, s]) => {
-        setOverview(o);
-        setFindings(f.filter((x) => x.scope === "global"));
-        setSynthesis(s);
-      })
+    api
+      .overview(queryParams)
+      .then(setOverview)
       .catch((e) => setError(String(e)));
   }, [queryParams]);
+
+  async function handleFillGaps() {
+    setFillingGaps(true);
+    setGapMessage(null);
+    try {
+      const result = await api.fillGaps();
+      setGapMessage(
+        result.daysFilled === 0
+          ? "Aucun trou détecté dans l'historique."
+          : `${result.daysFilled} jour(s) de données comblé(s)${result.daysRemaining > 0 ? ` (${result.daysRemaining} restant(s), relancez si besoin)` : ""}.`
+      );
+      api.overview(queryParams).then(setOverview);
+    } catch (e) {
+      setGapMessage(`Échec : ${String(e)}`);
+    } finally {
+      setFillingGaps(false);
+    }
+  }
 
   if (error) return <p className="empty-state">Erreur de chargement : {error}. Le serveur API tourne-t-il sur le bon port ?</p>;
   if (!overview) return <p className="empty-state">Chargement…</p>;
@@ -41,7 +55,17 @@ export function Overview() {
 
   return (
     <div>
-      <p className="chart-note">Période affichée : {periodLabel} — {deltaLabel}</p>
+      <div className="period-banner">
+        <p className="chart-note" style={{ margin: 0 }}>
+          Période affichée : {periodLabel} — {deltaLabel}
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {gapMessage && <span className="chart-note" style={{ margin: 0 }}>{gapMessage}</span>}
+          <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps}>
+            {fillingGaps ? "Vérification…" : "Combler les trous de données"}
+          </button>
+        </div>
+      </div>
 
       <h3 className="section-title">Trafic & conversion</h3>
       <div className="kpi-grid">
@@ -62,26 +86,36 @@ export function Overview() {
       <h3 className="section-title">SEO / GEO</h3>
       <div className="kpi-grid">
         <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(overview.organicSessions)} deltaPct={overview.organicSessionsChangePct} deltaLabel={deltaLabel} />
-        <KpiTile label="Trafic référé par IA" value={formatCompactNumber(overview.aiReferralSessions)} deltaPct={overview.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
+        <KpiTile
+          label="Trafic référé par IA"
+          value={formatCompactNumberOrNA(overview.aiReferralSessions)}
+          deltaPct={overview.aiReferralSessionsChangePct}
+          deltaLabel={deltaLabel}
+          note={overview.aiReferralSessions === null ? "Requête Piwik Pro échouée -- voir /api/diagnostics/optional-metrics" : undefined}
+        />
         <KpiTile
           label="Clics Search Console"
-          value={formatCompactNumber(overview.searchConsoleClicks)}
+          value={formatCompactNumberOrNA(overview.searchConsoleClicks)}
           deltaPct={overview.searchConsoleClicksChangePct}
           deltaLabel={deltaLabel}
-          note={overview.searchConsoleClicks === 0 ? "Intégration Search Console non configurée sur les sites suivis (Piwik Pro > Réglages > Intégrations)" : undefined}
+          note={overview.searchConsoleClicks === null ? "Intégration Search Console non configurée (Piwik Pro > Réglages > Intégrations) ou requête échouée -- voir /api/diagnostics/optional-metrics" : undefined}
         />
-        <KpiTile label="Impressions Search Console" value={formatCompactNumber(overview.searchConsoleImpressions)} deltaPct={null} deltaLabel="" />
+        <KpiTile label="Impressions Search Console" value={formatCompactNumberOrNA(overview.searchConsoleImpressions)} deltaPct={null} deltaLabel="" />
       </div>
 
       <h3 className="section-title">Signal bot</h3>
       <div className="kpi-grid">
         <KpiTile
           label="Trafic à faible engagement (organique/direct)"
-          value={`${(overview.lowEngagementShare * 100).toFixed(1)}%`}
+          value={formatPctOrNA(overview.lowEngagementShare)}
           deltaPct={overview.lowEngagementShareChangePct}
           deltaIsGoodWhenUp={false}
           deltaLabel={deltaLabel}
-          note="Sessions rebond (1 page) sur les canaux organique/direct -- proxy de trafic non-humain. Détail dans l'onglet Bots."
+          note={
+            overview.lowEngagementShare === null
+              ? "Requête Piwik Pro échouée -- voir /api/diagnostics/optional-metrics"
+              : "Sessions rebond (1 page) sur les canaux organique/direct -- proxy de trafic non-humain. Détail dans l'onglet Bots."
+          }
         />
       </div>
 
@@ -98,12 +132,23 @@ export function Overview() {
         </div>
         <div>
           <div className="card">
-            <h2>Synthèse hebdomadaire — plan d'action</h2>
-            <SynthesisPanel synthesis={synthesis} />
+            <h2>Synthèse — plan d'action</h2>
+            {overview.synthesisBullets.length === 0 ? (
+              <p className="empty-state">Pas assez d'historique pour synthétiser cette période.</p>
+            ) : (
+              <ul className="bullet-list">
+                {overview.synthesisBullets.map((b, i) => (
+                  <li key={i}>
+                    <span className="dot" />
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="card">
             <h2>Tendances les plus significatives — analyse & plan d'action</h2>
-            <FindingsList findings={findings} />
+            <FindingsList findings={overview.findings} />
           </div>
         </div>
       </div>

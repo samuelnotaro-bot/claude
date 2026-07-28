@@ -24,16 +24,25 @@ export interface DailySiteMetrics {
   supportConversions: number;
   /** File downloads (Resource Center, datasheets, ...), a dedicated Piwik Pro metric. */
   downloads: number;
+  /**
+   * These 5 fields depend on Piwik Pro queries that can fail independently of
+   * the core metrics above (unsupported column for this org, an integration
+   * like Search Console not configured for this specific site, a transient
+   * API error, ...). `null` means "couldn't be fetched", not "confirmed
+   * zero" -- see the matching doc comment on trends.DayPoint for how that
+   * distinction is preserved through aggregation and surfaced in the UI as
+   * "non disponible" instead of a misleading 0.
+   */
   /** Sessions whose `source` matches a known AI assistant domain (see aiReferrers.ts). */
-  aiReferralSessions: number;
+  aiReferralSessions: number | null;
   /** Single-pageview ("bounced") sessions on the organic channel -- a bot-trend proxy signal. */
-  organicBounces: number;
+  organicBounces: number | null;
   /** Single-pageview ("bounced") sessions on the direct channel -- a bot-trend proxy signal. */
-  directBounces: number;
-  /** Google Search Console clicks for this site/day, via Piwik Pro's GSC integration (0 if not configured for this site). */
-  searchConsoleClicks: number;
-  /** Google Search Console impressions for this site/day, via Piwik Pro's GSC integration (0 if not configured for this site). */
-  searchConsoleImpressions: number;
+  directBounces: number | null;
+  /** Google Search Console clicks for this site/day, via Piwik Pro's GSC integration. */
+  searchConsoleClicks: number | null;
+  /** Google Search Console impressions for this site/day, via Piwik Pro's GSC integration. */
+  searchConsoleImpressions: number | null;
 }
 
 export interface CountryBreakdown {

@@ -231,64 +231,11 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     columns: [{ column_id: COLUMN_IDS.downloads }],
   });
 
-  // AI-assistant referral traffic (see aiReferrers.ts): sum sessions whose
-  // `source` matches a known AI domain, regardless of medium.
-  let aiReferralSessions = 0;
-  try {
-    const sourceRows = await queryAnalytics({
-      website_id: siteId,
-      date_from: date,
-      date_to: date,
-      columns: [{ column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
-    });
-    for (const row of sourceRows) {
-      const value = row[COLUMN_IDS.sourceDimension];
-      const source = String(Array.isArray(value) ? value[1] ?? value[0] : value ?? "");
-      if (source && isAiReferrerSource(source)) {
-        aiReferralSessions += Number(row[COLUMN_IDS.sessions] ?? 0);
-      }
-    }
-  } catch (err) {
-    console.warn(`[piwik] source breakdown query failed for ${siteId}/${date}, aiReferralSessions=0:`, err);
-  }
-
-  // Bot-trend proxy: single-pageview ("bounced") sessions on the organic/direct
-  // channels -- real engagement is rare on floods of near-zero-interaction hits.
-  let organicBounces = 0;
-  let directBounces = 0;
-  try {
-    const bounceRows = await queryAnalytics({
-      website_id: siteId,
-      date_from: date,
-      date_to: date,
-      columns: [{ column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
-    });
-    for (const row of bounceRows) {
-      const label = String(row[COLUMN_IDS.channelDimension] ?? "");
-      const count = Number(row[COLUMN_IDS.bounces] ?? 0);
-      if (label === "organic") organicBounces += count;
-      else if (label === "direct") directBounces += count;
-    }
-  } catch (err) {
-    console.warn(`[piwik] bounces-by-medium query failed for ${siteId}/${date}, organic/directBounces=0:`, err);
-  }
-
-  // Google Search Console (see COLUMN_IDS comment): fails cleanly to 0 for any
-  // site that doesn't have the integration configured in Piwik Pro.
-  let searchConsoleClicks = 0;
-  let searchConsoleImpressions = 0;
-  try {
-    const [gscTotals] = await queryAnalytics({
-      website_id: siteId,
-      date_from: date,
-      date_to: date,
-      columns: [{ column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
-    });
-    searchConsoleClicks = Number(gscTotals?.[COLUMN_IDS.searchConsoleClicks] ?? 0);
-    searchConsoleImpressions = Number(gscTotals?.[COLUMN_IDS.searchConsoleImpressions] ?? 0);
-  } catch (err) {
-    console.warn(`[piwik] Search Console query failed for ${siteId}/${date} (integration not configured for this site?), =0:`, err);
-  }
+  const [aiReferralSessions, organicBouncesAndDirect, searchConsole] = await Promise.all([
+    fetchAiReferralSessions(siteId, date),
+    fetchChannelBounces(siteId, date),
+    fetchSearchConsoleTotals(siteId, date),
+  ]);
 
   return {
     siteId,
@@ -303,11 +250,129 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     rfqConversions,
     supportConversions,
     downloads: Number(downloadsTotal?.[COLUMN_IDS.downloads] ?? 0),
-    aiReferralSessions,
-    organicBounces,
-    directBounces,
-    searchConsoleClicks,
-    searchConsoleImpressions,
+    aiReferralSessions: aiReferralSessions.value,
+    organicBounces: organicBouncesAndDirect.value.organic,
+    directBounces: organicBouncesAndDirect.value.direct,
+    searchConsoleClicks: searchConsole.value.clicks,
+    searchConsoleImpressions: searchConsole.value.impressions,
+  };
+}
+
+interface ProbeResult<T> {
+  value: T;
+  ok: boolean;
+  error?: string;
+}
+
+// AI-assistant referral traffic (see aiReferrers.ts): sum sessions whose
+// `source` matches a known AI domain, regardless of medium. Returns `null`
+// (not 0) on failure -- see the DayPoint/DailySiteMetrics doc comments for why
+// that distinction matters -- and is also used standalone by the
+// /api/diagnostics/optional-metrics route so a real Piwik Pro error message
+// (wrong column id, auth, ...) is visible from the dashboard instead of only
+// ever showing up as a silent 0 with the reason buried in server logs.
+async function fetchAiReferralSessions(siteId: string, date: string): Promise<ProbeResult<number | null>> {
+  try {
+    const sourceRows = await queryAnalytics({
+      website_id: siteId,
+      date_from: date,
+      date_to: date,
+      columns: [{ column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
+    });
+    let total = 0;
+    for (const row of sourceRows) {
+      const value = row[COLUMN_IDS.sourceDimension];
+      const source = String(Array.isArray(value) ? value[1] ?? value[0] : value ?? "");
+      if (source && isAiReferrerSource(source)) {
+        total += Number(row[COLUMN_IDS.sessions] ?? 0);
+      }
+    }
+    return { value: total, ok: true };
+  } catch (err) {
+    console.warn(`[piwik] source breakdown query failed for ${siteId}/${date}, aiReferralSessions=null:`, err);
+    return { value: null, ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// Bot-trend proxy: single-pageview ("bounced") sessions on the organic/direct
+// channels -- real engagement is rare on floods of near-zero-interaction hits.
+async function fetchChannelBounces(siteId: string, date: string): Promise<ProbeResult<{ organic: number | null; direct: number | null }>> {
+  try {
+    const bounceRows = await queryAnalytics({
+      website_id: siteId,
+      date_from: date,
+      date_to: date,
+      columns: [{ column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
+    });
+    let organic = 0;
+    let direct = 0;
+    for (const row of bounceRows) {
+      const label = String(row[COLUMN_IDS.channelDimension] ?? "");
+      const count = Number(row[COLUMN_IDS.bounces] ?? 0);
+      if (label === "organic") organic += count;
+      else if (label === "direct") direct += count;
+    }
+    return { value: { organic, direct }, ok: true };
+  } catch (err) {
+    console.warn(`[piwik] bounces-by-medium query failed for ${siteId}/${date}, organic/directBounces=null:`, err);
+    return { value: { organic: null, direct: null }, ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// Google Search Console (see COLUMN_IDS comment): a query failure here can
+// mean the integration genuinely isn't configured for this site in Piwik
+// Pro, but it can equally mean a wrong column id or an unrelated API error --
+// null (not 0) so the UI shows "non disponible" rather than a confirmed zero,
+// and the /api/diagnostics/optional-metrics route surfaces the real reason.
+async function fetchSearchConsoleTotals(siteId: string, date: string): Promise<ProbeResult<{ clicks: number | null; impressions: number | null }>> {
+  try {
+    const [gscTotals] = await queryAnalytics({
+      website_id: siteId,
+      date_from: date,
+      date_to: date,
+      columns: [{ column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
+    });
+    return {
+      value: {
+        clicks: Number(gscTotals?.[COLUMN_IDS.searchConsoleClicks] ?? 0),
+        impressions: Number(gscTotals?.[COLUMN_IDS.searchConsoleImpressions] ?? 0),
+      },
+      ok: true,
+    };
+  } catch (err) {
+    console.warn(`[piwik] Search Console query failed for ${siteId}/${date} (integration not configured for this site?), =null:`, err);
+    return { value: { clicks: null, impressions: null }, ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export interface OptionalMetricsDiagnostics {
+  siteId: string;
+  siteName: string;
+  date: string;
+  aiReferral: { ok: boolean; error?: string };
+  channelBounces: { ok: boolean; error?: string };
+  searchConsole: { ok: boolean; error?: string };
+}
+
+/**
+ * Runs the same 3 optional queries as getDailyMetrics for a single site/day
+ * and reports success/failure + the real error message for each -- exposed
+ * via GET /api/diagnostics/optional-metrics so a "0" on the dashboard can be
+ * told apart from a broken query without needing to dig through server logs.
+ */
+export async function probeOptionalMetrics(siteId: string, siteName: string, date: string): Promise<OptionalMetricsDiagnostics> {
+  const [ai, bounces, gsc] = await Promise.all([
+    fetchAiReferralSessions(siteId, date),
+    fetchChannelBounces(siteId, date),
+    fetchSearchConsoleTotals(siteId, date),
+  ]);
+  return {
+    siteId,
+    siteName,
+    date,
+    aiReferral: { ok: ai.ok, error: ai.error },
+    channelBounces: { ok: bounces.ok, error: bounces.error },
+    searchConsole: { ok: gsc.ok, error: gsc.error },
   };
 }
 

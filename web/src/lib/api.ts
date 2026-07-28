@@ -33,11 +33,11 @@ export interface DayPoint {
   conversionRate: number;
   bounceRate: number;
   channels: Record<string, number>;
-  aiReferralSessions: number;
-  organicBounces: number;
-  directBounces: number;
-  searchConsoleClicks: number;
-  searchConsoleImpressions: number;
+  aiReferralSessions: number | null;
+  organicBounces: number | null;
+  directBounces: number | null;
+  searchConsoleClicks: number | null;
+  searchConsoleImpressions: number | null;
   /** Flagged as a traffic-flood anomaly (see server anomaly.ts). Only set on /api/series (raw/detail view). */
   isAnomaly?: boolean;
   isMissing?: boolean;
@@ -45,7 +45,32 @@ export interface DayPoint {
 
 export type PeriodDays = 7 | 30 | 90 | 365;
 
-/** KPI fields shared by /api/overview, /api/regions and /api/sites/summary (see server/src/routes/api.ts withChanges()). */
+export interface Finding {
+  scope: "site" | "continent" | "global";
+  entityId: string;
+  entityName: string;
+  metric:
+    | "sessions"
+    | "conversionRate"
+    | "goalConversions"
+    | "channelMix"
+    | "organicSessions"
+    | "aiReferralSessions"
+    | "lowEngagementShare"
+    | "searchConsoleClicks"
+    | "rfq"
+    | "support"
+    | "downloads";
+  label: string;
+  direction: "up" | "down";
+  changePct: number | null;
+  current: number;
+  previous: number;
+  impactScore: number;
+  detail?: string;
+}
+
+/** KPI fields shared by /api/overview, /api/regions and /api/sites/summary (see server/src/routes/api.ts withChanges()). Nullable fields mean "non disponible" (a Piwik query failed or the integration isn't configured), distinct from a confirmed 0. */
 export interface KpiSet {
   sessions: number;
   sessionsChangePct: number | null;
@@ -61,14 +86,14 @@ export interface KpiSet {
   downloadsChangePct: number | null;
   organicSessions: number;
   organicSessionsChangePct: number | null;
-  aiReferralSessions: number;
+  aiReferralSessions: number | null;
   aiReferralSessionsChangePct: number | null;
-  lowEngagementSessions: number;
-  lowEngagementShare: number;
+  lowEngagementSessions: number | null;
+  lowEngagementShare: number | null;
   lowEngagementShareChangePct: number | null;
-  searchConsoleClicks: number;
+  searchConsoleClicks: number | null;
   searchConsoleClicksChangePct: number | null;
-  searchConsoleImpressions: number;
+  searchConsoleImpressions: number | null;
 }
 
 export interface Overview extends KpiSet {
@@ -81,6 +106,9 @@ export interface Overview extends KpiSet {
   series: DayPoint[];
   /** Days excluded from the KPIs above because they were flagged as a traffic-flood anomaly. */
   excludedAnomalyDays: number;
+  findings: Finding[];
+  /** Synthesis bullets generated on the fly for this exact period (distinct from the cron-generated weekly synthesis_history log, see the Synthèses tab). */
+  synthesisBullets: string[];
 }
 
 export interface SiteSummary extends KpiSet {
@@ -88,26 +116,14 @@ export interface SiteSummary extends KpiSet {
   name: string;
   region: string;
   excludedAnomalyDays: number;
+  findings: Finding[];
 }
 
 export interface RegionSummary extends KpiSet {
   region: string;
   siteCount: number;
   excludedAnomalyDays: number;
-}
-
-export interface Finding {
-  scope: "site" | "continent" | "global";
-  entityId: string;
-  entityName: string;
-  metric: "sessions" | "conversionRate" | "goalConversions" | "channelMix" | "organicSessions" | "aiReferralSessions" | "lowEngagementShare" | "searchConsoleClicks";
-  label: string;
-  direction: "up" | "down";
-  changePct: number | null;
-  current: number;
-  previous: number;
-  impactScore: number;
-  detail?: string;
+  findings: Finding[];
 }
 
 export interface Synthesis {
@@ -153,6 +169,22 @@ export interface BotAnomalyEntry {
   excessSessions: number;
 }
 
+export interface TrafficSpikeSite {
+  siteId: string;
+  siteName: string;
+  sessions: number;
+  averageSessions: number;
+}
+
+export interface TrafficSpikeEntry {
+  date: string;
+  sessions: number;
+  averageSessions: number;
+  organicShare: number;
+  directShare: number;
+  sites: TrafficSpikeSite[];
+}
+
 export interface BotSignal {
   periodFrom: string;
   periodTo: string;
@@ -160,8 +192,24 @@ export interface BotSignal {
   totalExcessSessions: number;
   estimatedBotSharePct: number | null;
   anomalies: BotAnomalyEntry[];
+  trafficSpikes: TrafficSpikeEntry[];
   lowEngagementShare: number;
   lowEngagementShareChangePct: number | null;
+}
+
+export interface GapFillResult {
+  sitesWithGaps: number;
+  daysFilled: number;
+  daysRemaining: number;
+}
+
+export interface OptionalMetricsDiagnostics {
+  siteId: string;
+  siteName: string;
+  date: string;
+  aiReferral: { ok: boolean; error?: string };
+  channelBounces: { ok: boolean; error?: string };
+  searchConsole: { ok: boolean; error?: string };
 }
 
 export const api = {
@@ -176,8 +224,10 @@ export const api = {
   synthesisHistory: (limit = 20) => get<Synthesis[]>(`/api/synthesis/history?limit=${limit}`),
   generateSynthesis: () => post<Synthesis | null>("/api/synthesis/generate"),
   geoMismatches: () => get<GeoMismatch[]>("/api/geo-mismatches"),
-  checkGeoMismatches: () => post<GeoMismatch[]>("/api/geo-mismatches/check"),
+  checkGeoMismatches: (periodQuery: string) => post<GeoMismatch[]>(`/api/geo-mismatches/check?${periodQuery}`),
   bots: (periodQuery: string) => get<BotSignal>(`/api/bots?${periodQuery}`),
+  fillGaps: () => post<GapFillResult>("/api/data/fill-gaps"),
+  optionalMetricsDiagnostics: () => get<OptionalMetricsDiagnostics>("/api/diagnostics/optional-metrics"),
   health: () => get<{ ok: boolean; mode: string }>("/api/health"),
   backfillStatus: () => get<BackfillStatus>("/api/backfill/status"),
 };

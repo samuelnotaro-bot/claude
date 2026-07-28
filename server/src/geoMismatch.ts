@@ -68,11 +68,14 @@ function buildActionPlan(siteName: string, expectedLbl: string, country: string,
  * multinational audience). The two regional sites (emea./apac.socomec.com) use
  * a broader region-level rule instead of a single expected country (see
  * expectedRegionSet in expectedCountry.ts).
+ *
+ * `dateFrom`/`dateTo` default to the last 30 days (used by the weekly cron
+ * check, see scheduler.ts) but are otherwise the dashboard's selected period
+ * (see routes/api.ts's POST /api/geo-mismatches/check), so the Localisation
+ * tab's analysis matches whatever window the user is actually looking at.
  */
-export async function checkGeoMismatches(): Promise<GeoMismatchRecord[]> {
+export async function checkGeoMismatches(dateFrom = dateNDaysAgo(LOOKBACK_DAYS), dateTo = dateNDaysAgo(0)): Promise<GeoMismatchRecord[]> {
   const sites = await getSites();
-  const dateFrom = dateNDaysAgo(LOOKBACK_DAYS);
-  const dateTo = dateNDaysAgo(0);
 
   // Countries that already have their own dedicated site -- traffic from these
   // landing on emea.socomec.com instead is itself worth flagging.

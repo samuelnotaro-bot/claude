@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type SiteSummary, type DayPoint, type Finding } from "../lib/api";
+import { api, type SiteSummary, type DayPoint } from "../lib/api";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatPct } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 type SortKey = "name" | "region" | "sessions" | "sessionsChangePct" | "conversionRate";
@@ -14,7 +14,6 @@ export function Sites() {
   const [sites, setSites] = useState<SiteSummary[]>([]);
   const [selected, setSelected] = useState<SiteSummary | null>(null);
   const [series, setSeries] = useState<DayPoint[]>([]);
-  const [findings, setFindings] = useState<Finding[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("sessions");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
@@ -23,7 +22,6 @@ export function Sites() {
       setSites(data);
       setSelected((current) => (current && data.find((s) => s.id === current.id)) || data[0] || null);
     });
-    api.findings(200).then(setFindings);
   }, [queryParams]);
 
   useEffect(() => {
@@ -51,7 +49,6 @@ export function Sites() {
   }
 
   const deltaLabel = periodComparisonLabel(compare);
-  const siteFindings = findings.filter((f) => f.entityId === selected?.id);
 
   return (
     <div>
@@ -90,11 +87,11 @@ export function Sites() {
           <h3 className="section-title">SEO/GEO, signal bot & conversion — {selected.name}</h3>
           <div className="kpi-grid">
             <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selected.organicSessions)} deltaPct={selected.organicSessionsChangePct} deltaLabel={deltaLabel} />
-            <KpiTile label="Trafic référé par IA" value={formatCompactNumber(selected.aiReferralSessions)} deltaPct={selected.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
-            <KpiTile label="Clics Search Console" value={formatCompactNumber(selected.searchConsoleClicks)} deltaPct={selected.searchConsoleClicksChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Trafic référé par IA" value={formatCompactNumberOrNA(selected.aiReferralSessions)} deltaPct={selected.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Clics Search Console" value={formatCompactNumberOrNA(selected.searchConsoleClicks)} deltaPct={selected.searchConsoleClicksChangePct} deltaLabel={deltaLabel} />
             <KpiTile
               label="Trafic à faible engagement (signal bot)"
-              value={`${(selected.lowEngagementShare * 100).toFixed(1)}%`}
+              value={formatPctOrNA(selected.lowEngagementShare)}
               deltaPct={selected.lowEngagementShareChangePct}
               deltaIsGoodWhenUp={false}
               deltaLabel={deltaLabel}
@@ -123,7 +120,7 @@ export function Sites() {
           </div>
           <div className="card">
             <h2>Analyse & plan d'action — {selected.name}</h2>
-            <FindingsList findings={siteFindings} />
+            <FindingsList findings={selected.findings} />
           </div>
         </>
       )}

@@ -236,10 +236,11 @@ export function generateDemoMetrics(siteId: string, date: string, today: Date): 
 
   // Search Console: only a subset of demo sites simulate having the GSC
   // integration configured, matching the real-world "not every site has it
-  // set up in Piwik Pro" situation this app has to tolerate.
+  // set up in Piwik Pro" situation this app has to tolerate -- null (not 0),
+  // since "not configured" is an unavailable data point, not a confirmed zero.
   const hasSearchConsoleDemo = hashStr(def.id) % 3 !== 0;
-  const searchConsoleImpressions = hasSearchConsoleDemo ? Math.round(channels.organic * (18 + rng() * 12)) : 0;
-  const searchConsoleClicks = hasSearchConsoleDemo ? Math.round(searchConsoleImpressions * (0.02 + rng() * 0.03)) : 0;
+  const searchConsoleImpressions = hasSearchConsoleDemo ? Math.round(channels.organic * (18 + rng() * 12)) : null;
+  const searchConsoleClicks = hasSearchConsoleDemo && searchConsoleImpressions !== null ? Math.round(searchConsoleImpressions * (0.02 + rng() * 0.03)) : null;
 
   return {
     siteId,

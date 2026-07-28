@@ -50,9 +50,44 @@ export function Bots() {
           </div>
 
           <div className="card">
-            <h2>Variations détectées ({signal.anomalies.length})</h2>
+            <h2>Pics de trafic ({signal.trafficSpikes.length})</h2>
+            <p className="chart-note">
+              Jours où le trafic (tous sites) dépasse notablement la moyenne de la période sélectionnée, avec la répartition
+              organique/direct et les sites concernés -- une liste plus souple que les variations statistiques ci-dessous, qui
+              reste utile même sur un historique court.
+            </p>
+            {signal.trafficSpikes.length === 0 ? (
+              <p className="empty-state">Pas assez de jours dans la période sélectionnée pour calculer une moyenne, ou aucun pic notable.</p>
+            ) : (
+              <ul className="bullet-list">
+                {signal.trafficSpikes.map((spike, i) => (
+                  <li key={i}>
+                    <span className="dot" style={{ background: "var(--warning)" }} />
+                    <span>
+                      <strong>{formatDate(spike.date)}</strong> — {formatCompactNumber(spike.sessions)} sessions (moyenne période :{" "}
+                      {formatCompactNumber(spike.averageSessions)}) · {(spike.organicShare * 100).toFixed(0)}% organique ·{" "}
+                      {(spike.directShare * 100).toFixed(0)}% direct
+                      {spike.sites.length > 0 && (
+                        <span className="finding-detail">
+                          {" "}
+                          — sites concernés : {spike.sites.map((s) => s.siteName).join(", ")}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="card">
+            <h2>Variations statistiques confirmées ({signal.anomalies.length})</h2>
+            <p className="chart-note">
+              Sous-ensemble plus strict des pics ci-dessus : nécessite un historique suffisant (8 semaines) et une signature de
+              concentration par canal caractéristique des vagues de bots déjà observées sur cette organisation.
+            </p>
             {signal.anomalies.length === 0 ? (
-              <p className="empty-state">Aucune variation statistiquement anormale détectée sur cette période.</p>
+              <p className="empty-state">Aucune variation statistiquement anormale confirmée sur cette période (historique probablement encore trop court -- voir les pics ci-dessus).</p>
             ) : (
               <table className="data-table">
                 <thead>

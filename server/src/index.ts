@@ -11,7 +11,7 @@ import { registerStaticWeb } from "./staticWeb.js";
 import { startScheduler } from "./scheduler.js";
 import { getLatestSynthesis } from "./repo.js";
 import { backfillAll } from "./backfill.js";
-import { catchUpMissingDays } from "./sync.js";
+import { backfillGaps } from "./sync.js";
 
 await initSchema();
 
@@ -47,9 +47,15 @@ try {
     app.log.warn("Aucune donnée trouvée -- lancement automatique d'un backfill en arrière-plan.");
     backfillAll().catch((err) => app.log.error({ err }, "Backfill automatique au démarrage échoué"));
   } else {
-    // Already has history: just close any gap left by cron runs missed while
-    // asleep (Render free-tier spin-down) instead of a full re-backfill.
-    catchUpMissingDays().catch((err) => app.log.error({ err }, "Rattrapage des jours manquants échoué"));
+    // Already has history: close any gaps left by cron runs missed while
+    // asleep (Render free-tier spin-down) or by a transient API failure,
+    // instead of a full re-backfill. Also available on demand via
+    // POST /api/data/fill-gaps (see routes/api.ts).
+    backfillGaps()
+      .then((r) => {
+        if (r.daysFilled > 0) app.log.info(r, "Rattrapage des jours manquants au démarrage");
+      })
+      .catch((err) => app.log.error({ err }, "Rattrapage des jours manquants échoué"));
   }
 } catch (err) {
   app.log.error(err);

@@ -42,14 +42,14 @@ server/   API Node.js/TypeScript (Fastify) + PostgreSQL (pg)
   src/siteScope.ts  filtre "extension pays" (quels sites Piwik Pro sont suivis)
   src/siteRegistry.ts découverte des sites + rattachement à une région
   src/anomaly.ts    détection des pics de trafic anormal (organique ou direct, voir ci-dessous)
-  src/bots.ts       agrège les pics détectés + quantifie le trafic bot vs. trafic total (onglet Bots)
+  src/bots.ts       variations statistiques + liste souple de pics de trafic + estimation du trafic bot (onglet Bots)
   src/aiReferrers.ts liste des domaines d'assistants IA (classification du trafic référé par IA)
   src/period.ts     période libre + comparaison (période précédente / année précédente)
   src/cache.ts      cache TTL en mémoire pour les endpoints agrégés (performance)
-  src/trends.ts     détection de tendances (WoW, z-score, mix de canaux, SEO/GEO, signal bot)
-  src/synthesis.ts  génération des bullet points (règles, pas de LLM)
+  src/trends.ts     agrégation nullable-safe + détection de tendances (WoW, z-score, mix de canaux, SEO/GEO, signal bot)
+  src/synthesis.ts  génération des bullet points (règles, pas de LLM), réutilisé pour la synthèse hebdo et la synthèse à la volée
   src/scheduler.ts  cron: fetch quotidien + synthèse hebdomadaire
-  src/sync.ts       fetch quotidien + rattrapage des jours manqués au démarrage
+  src/sync.ts       fetch quotidien + scan/comblement des trous dans l'historique (pas seulement en fin de période)
   src/basicAuth.ts  protection HTTP Basic de tout le dashboard
   src/staticWeb.ts  sert le build web (web/dist) depuis ce même serveur
   src/demoData.ts   générateur de données de démonstration
@@ -153,19 +153,29 @@ de Socomec. Pour une exception ponctuelle, éditez `config/site-overrides.json` 
 
 Cette valeur prime sur la règle par défaut.
 
-## Synthèse périodique
+## Synthèse
 
-Chaque semaine (configurable via `SYNTHESIS_CRON`), le moteur :
-1. calcule les variations 7j/7j précédents pour le trafic, le taux de conversion
-   et la répartition des canaux, par site, par région business et globalement ;
-2. isole les écarts statistiquement significatifs (z-score vs. 8 semaines de
-   référence) ;
-3. classe les résultats par impact (ampleur du changement × volume concerné) ;
-4. rédige 5-6 points d'action en français à partir des règles dans
-   `server/src/synthesis.ts` — pas d'appel API, donc coût nul et 100% prévisible.
+Deux mécanismes distincts partagent le même moteur de règles
+(`server/src/synthesis.ts`, aucun appel API donc coût nul et 100% prévisible) :
 
-Le bouton **Générer maintenant** dans l'onglet Synthèses permet de relancer le
-calcul à la demande.
+1. **Synthèse hebdomadaire persistée** (onglet Synthèses) : chaque semaine
+   (configurable via `SYNTHESIS_CRON`), le moteur calcule les variations
+   7j/7j précédents, isole les écarts statistiquement significatifs (z-score
+   vs. 8 semaines de référence), et enregistre 5-6 points d'action dans
+   l'historique. Le bouton **Générer maintenant** relance ce calcul à la
+   demande.
+2. **Synthèse à la volée, cohérente avec la période sélectionnée** (carte
+   "Synthèse — plan d'action" sur la vue d'ensemble) : recalculée à chaque
+   changement de période/comparaison directement dans `/api/overview`, à
+   partir des mêmes KPIs affichés juste au-dessus — pas de z-score/historique
+   de 8 semaines requis (une période personnalisée courte n'en a pas
+   forcément), juste un seuil de variation relative par métrique. Les
+   panneaux "Analyse & plan d'action" des onglets Régions et Sites suivent le
+   même principe, scopés à la région/au site sélectionné.
+
+Les deux utilisent le même texte d'action par métrique
+(`bulletForFinding`), donc la voix reste cohérente entre le journal
+hebdomadaire et l'analyse ad hoc.
 
 ## Détection des pics de trafic anormal, onglet Bots
 
@@ -187,22 +197,35 @@ mesuré sur la période. Un signal secondaire, plus doux, complète cette
 estimation : la part de sessions "rebond" (1 page vue) sur les canaux
 organique/direct, à lire comme une tendance plutôt qu'une quantification dure.
 
-**Limite connue** : seuls les pics statistiquement extrêmes sont détectés — un
-bruit de fond de trafic non-humain à un niveau plus faible, sous le seuil de
-détection, reste inclus dans les KPIs et dans l'estimation du trafic bot (qui
-est donc un plancher, pas une mesure exhaustive). La solution durable est de
-vérifier le filtre anti-bot dans Piwik Pro (Administration > Confidentialité).
+Cette détection statistique stricte nécessite 14 à 56 jours d'historique et une
+signature précise (concentration par canal) : sur un historique court, ou pour
+un pic qui ne colle pas exactement à cette signature, elle ne renvoie rien.
+L'onglet affiche donc en complément une liste **"Pics de trafic"** plus souple
+(`server/src/bots.ts#computeTrafficSpikes`) : les jours où le trafic (tous
+sites) dépasse notablement la moyenne de la période sélectionnée, avec la
+répartition organique/direct et les sites dont la propre moyenne est elle
+aussi dépassée ce jour-là ("sites concernés") — utile dès quelques jours de
+données, sans attendre 8 semaines d'historique.
+
+**Limite connue** : la détection statistique stricte ne capte que les pics
+statistiquement extrêmes — un bruit de fond de trafic non-humain à un niveau
+plus faible, sous le seuil de détection, reste inclus dans les KPIs et dans
+l'estimation du trafic bot (qui est donc un plancher, pas une mesure
+exhaustive). La solution durable est de vérifier le filtre anti-bot dans
+Piwik Pro (Administration > Confidentialité).
 
 ## Détection des écarts de géolocalisation (onglet Localisation)
 
 Chaque site à extension pays a un pays attendu (déduit de son ccTLD, ex.
 `socomec.co.uk` → GB). Un contrôle hebdomadaire (`geoMismatch.ts`, lancé avec
-la synthèse périodique, ou à la demande via le bouton "Vérifier maintenant"
-dans l'onglet **Localisation**) compare la répartition réelle des visiteurs par
-pays (30 derniers jours) à ce pays attendu, et signale un site quand un seul
-pays inattendu représente **au moins 20 %** du trafic (ex : trafic indien
-important sur le site UK) — en dessous, l'écart est considéré trop marginal
-pour justifier une analyse.
+la synthèse périodique sur les 30 derniers jours) compare la répartition
+réelle des visiteurs par pays à ce pays attendu, et signale un site quand un
+seul pays inattendu représente **au moins 20 %** du trafic (ex : trafic
+indien important sur le site UK) — en dessous, l'écart est considéré trop
+marginal pour justifier une analyse. Dans l'onglet **Localisation**, ce
+contrôle se relance automatiquement sur la **période actuellement
+sélectionnée** (bouton "Vérifier maintenant" pour le relancer à la demande
+sans changer de période), pour rester cohérent avec le reste du dashboard.
 
 Pour chaque site signalé, le contrôle calcule aussi la répartition **organique
 vs. directe** du trafic venant de ce pays inattendu (car les deux n'appellent
@@ -255,10 +278,39 @@ met le service en veille après une période d'inactivité :
   rebuild inconditionnel coûtait une minute ou plus à chaque réveil pour rien.
 - **Données manquantes** : le fetch quotidien planifié (`FETCH_CRON`) ne peut
   se déclencher que si le process est éveillé à l'heure prévue — sur le plan
-  gratuit, ce n'est pas garanti. `server/src/sync.ts#catchUpMissingDays`
-  comble au démarrage les jours manquants entre la dernière synchronisation
-  connue et hier (plafonné à 30 jours par réveil), pour que l'historique reste
-  complet sans dépendre d'un réveil au bon moment.
+  gratuit, ce n'est pas garanti, et une erreur API transitoire peut aussi
+  faire échouer un seul site un seul jour. Résultat concret observé : des
+  trous *à l'intérieur* de l'historique (ex. "pas de données du 1er au 19
+  juillet"), pas seulement à la fin, ce qui rendait aussi les comparaisons de
+  période peu fiables. `server/src/sync.ts#backfillGaps` scanne tout
+  l'historique existant (pas seulement la queue) pour trouver les couples
+  (site, jour) manquants et les recharge, plafonné à 300 par exécution pour
+  éviter une rafale d'appels API après une très longue absence — le reste se
+  comble à l'exécution suivante (prochain réveil, ou immédiatement via le
+  bouton **Combler les trous de données** sur la vue d'ensemble, qui appelle
+  `POST /api/data/fill-gaps`).
+
+## Fiabilité des KPIs optionnels (IA/Search Console/signal bot)
+
+Trois KPIs (trafic référé par IA, clics/impressions Search Console, signal
+bot organique/direct) dépendent chacun d'une requête Piwik Pro distincte des
+métriques de base, qui peut échouer indépendamment (colonne non supportée par
+cette organisation, intégration Search Console non configurée sur un site,
+erreur API transitoire). Une requête en échec est stockée en base comme
+`NULL`, pas comme `0` : le dashboard affiche alors **"non disponible"** au
+lieu d'un zéro trompeur, et l'agrégation (site → région → global) ne renvoie
+un total `null` que si *toutes* les valeurs contributives sont indisponibles
+— une seule donnée réelle suffit à produire un total partiel plutôt que rien.
+
+Pour diagnostiquer un "non disponible" persistant sans fouiller les logs
+Render, `GET /api/diagnostics/optional-metrics` (uniquement en
+`PIWIK_MODE=live`) relance les 3 requêtes pour un site réel et renvoie le
+message d'erreur exact de chacune.
+
+**Limite connue** : les lignes écrites avant ce correctif restent à `0` en
+base (impossible de savoir rétroactivement lesquelles étaient un vrai zéro
+plutôt qu'un échec passé) — seules les nouvelles écritures (sync quotidien,
+rattrapage) bénéficient de la distinction `null`/`0`.
 
 ## Limites connues / prochaines étapes possibles
 

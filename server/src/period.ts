@@ -82,8 +82,14 @@ export function resolveComparisonRange(period: PeriodQuery): ComparisonRange {
   return { from: prevFrom, to: prevTo };
 }
 
-/** % change vs the comparison period, or null when there isn't enough history to compare fairly. */
-export function pctChange(current: number, previous: number): number | null {
+/**
+ * % change vs the comparison period, or null when there isn't enough history
+ * to compare fairly -- or when either side is itself unavailable (a failed
+ * Piwik query, see trends.DayPoint), since a % change against an unknown
+ * value would be fabricated, not computed.
+ */
+export function pctChange(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null) return null;
   if (previous <= 0) return null;
   return (current - previous) / previous;
 }

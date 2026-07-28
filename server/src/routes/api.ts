@@ -8,10 +8,23 @@ import {
   getGeoMismatches,
 } from "../repo.js";
 import { runTrendAnalysis, runSynthesis } from "../analysis.js";
-import { toDayPoints, aggregateDayPoints, aggregateDayPointSeries, zeroFillDayPoints, type DayPoint } from "../trends.js";
+import { generateSynthesis } from "../synthesis.js";
+import {
+  toDayPoints,
+  aggregateDayPoints,
+  aggregateDayPointSeries,
+  zeroFillDayPoints,
+  METRIC_LABELS,
+  type DayPoint,
+  type Finding,
+  type FindingMetric,
+  type Scope,
+} from "../trends.js";
 import { excludeAnomalies, flagAnomalies } from "../anomaly.js";
 import { checkGeoMismatches } from "../geoMismatch.js";
 import { computeBotSignal } from "../bots.js";
+import { backfillGaps } from "../sync.js";
+import { probeOptionalMetrics } from "../piwik/client.js";
 import { getBackfillStatus } from "../backfillStatus.js";
 import { config } from "../config.js";
 import type { Continent } from "../continent.js";
@@ -28,6 +41,22 @@ import {
 
 function sum(points: DayPoint[], pick: (p: DayPoint) => number): number {
   return points.reduce((a, p) => a + pick(p), 0);
+}
+
+/**
+ * Sums an optional (Piwik-integration-dependent) field across a period,
+ * staying null only when every single point is null (see trends.DayPoint) --
+ * a null total means "this KPI has no data at all for this period", which
+ * the UI shows as "non disponible" instead of a misleading 0.
+ */
+function sumNullable(points: DayPoint[], pick: (p: DayPoint) => number | null): number | null {
+  let total: number | null = null;
+  for (const p of points) {
+    const v = pick(p);
+    if (v === null) continue;
+    total = (total ?? 0) + v;
+  }
+  return total;
 }
 
 /**
@@ -77,17 +106,24 @@ interface KpiTotals {
   support: number;
   downloads: number;
   organicSessions: number;
-  aiReferralSessions: number;
-  lowEngagementSessions: number;
-  lowEngagementShare: number;
-  searchConsoleClicks: number;
-  searchConsoleImpressions: number;
+  // These 3 (and lowEngagementSessions/Share, derived from organic/directBounces)
+  // are nullable: null means "no data available for this period" (every
+  // contributing day/site failed to fetch this metric -- see trends.DayPoint),
+  // shown as "non disponible" in the UI instead of a misleading 0.
+  aiReferralSessions: number | null;
+  lowEngagementSessions: number | null;
+  lowEngagementShare: number | null;
+  searchConsoleClicks: number | null;
+  searchConsoleImpressions: number | null;
 }
 
 function totalsOf(series: DayPoint[]): KpiTotals {
   const sessions = sum(series, (p) => p.sessions);
   const conversions = sum(series, (p) => p.goalConversions);
-  const lowEngagementSessions = sum(series, (p) => p.organicBounces + p.directBounces);
+  const organicBouncesSum = sumNullable(series, (p) => p.organicBounces);
+  const directBouncesSum = sumNullable(series, (p) => p.directBounces);
+  const lowEngagementSessions =
+    organicBouncesSum === null && directBouncesSum === null ? null : (organicBouncesSum ?? 0) + (directBouncesSum ?? 0);
   return {
     sessions,
     conversions,
@@ -96,17 +132,17 @@ function totalsOf(series: DayPoint[]): KpiTotals {
     support: sum(series, (p) => p.supportConversions),
     downloads: sum(series, (p) => p.downloads),
     organicSessions: sum(series, (p) => p.channels.organic),
-    aiReferralSessions: sum(series, (p) => p.aiReferralSessions),
+    aiReferralSessions: sumNullable(series, (p) => p.aiReferralSessions),
     lowEngagementSessions,
-    lowEngagementShare: sessions > 0 ? lowEngagementSessions / sessions : 0,
-    searchConsoleClicks: sum(series, (p) => p.searchConsoleClicks),
-    searchConsoleImpressions: sum(series, (p) => p.searchConsoleImpressions),
+    lowEngagementShare: lowEngagementSessions === null ? null : sessions > 0 ? lowEngagementSessions / sessions : 0,
+    searchConsoleClicks: sumNullable(series, (p) => p.searchConsoleClicks),
+    searchConsoleImpressions: sumNullable(series, (p) => p.searchConsoleImpressions),
   };
 }
 
-/** Pairs each current KPI total with its %-change vs the comparison period (null when there isn't enough history yet -- see period.ts). */
+/** Pairs each current KPI total with its %-change vs the comparison period (null when there isn't enough history yet, or when either side is unavailable -- see period.ts). */
 function withChanges(current: KpiTotals, previous: KpiTotals, historyOk: boolean) {
-  const chg = (a: number, b: number) => (historyOk ? pctChange(a, b) : null);
+  const chg = (a: number | null, b: number | null) => (historyOk ? pctChange(a, b) : null);
   return {
     sessions: current.sessions,
     sessionsChangePct: chg(current.sessions, previous.sessions),
@@ -131,6 +167,54 @@ function withChanges(current: KpiTotals, previous: KpiTotals, historyOk: boolean
     searchConsoleClicksChangePct: chg(current.searchConsoleClicks, previous.searchConsoleClicks),
     searchConsoleImpressions: current.searchConsoleImpressions,
   };
+}
+
+const PERIOD_FINDING_METRICS: { key: keyof KpiTotals; metric: FindingMetric; minAbsChangePct: number }[] = [
+  { key: "sessions", metric: "sessions", minAbsChangePct: 0.12 },
+  { key: "conversionRate", metric: "conversionRate", minAbsChangePct: 0.15 },
+  { key: "conversions", metric: "goalConversions", minAbsChangePct: 0.15 },
+  { key: "organicSessions", metric: "organicSessions", minAbsChangePct: 0.15 },
+  { key: "aiReferralSessions", metric: "aiReferralSessions", minAbsChangePct: 0.2 },
+  { key: "lowEngagementShare", metric: "lowEngagementShare", minAbsChangePct: 0.15 },
+  { key: "searchConsoleClicks", metric: "searchConsoleClicks", minAbsChangePct: 0.15 },
+  { key: "rfq", metric: "rfq", minAbsChangePct: 0.15 },
+  { key: "support", metric: "support", minAbsChangePct: 0.15 },
+  { key: "downloads", metric: "downloads", minAbsChangePct: 0.15 },
+];
+
+/**
+ * Findings scoped to exactly the period/comparison the user selected, unlike
+ * /api/findings (a fixed rolling 7-vs-7-day statistical view used only for
+ * the cron-generated weekly synthesis history). Built directly from the same
+ * KpiTotals already computed for the KPI tiles, so the "Analyse & plan
+ * d'action" panels never show a different window than the numbers next to
+ * them. No z-score/baseline requirement (arbitrary custom periods don't
+ * necessarily have 8 weeks of trailing history to compute one from) --  just
+ * a minimum relative-change threshold per metric.
+ */
+function buildPeriodFindings(scope: Scope, entityId: string, entityName: string, current: KpiTotals, previous: KpiTotals, historyOk: boolean): Finding[] {
+  if (!historyOk) return [];
+  const findings: Finding[] = [];
+  for (const { key, metric, minAbsChangePct } of PERIOD_FINDING_METRICS) {
+    const currentVal = current[key];
+    const previousVal = previous[key];
+    if (currentVal === null || previousVal === null) continue;
+    const changePct = pctChange(currentVal, previousVal);
+    if (changePct === null || Math.abs(changePct) < minAbsChangePct) continue;
+    findings.push({
+      scope,
+      entityId,
+      entityName,
+      metric,
+      label: METRIC_LABELS[metric],
+      direction: changePct >= 0 ? "up" : "down",
+      changePct,
+      current: currentVal,
+      previous: previousVal,
+      impactScore: Math.abs(changePct) * Math.log10(Math.max(currentVal, previousVal, 1) + 1),
+    });
+  }
+  return findings.sort((a, b) => b.impactScore - a.impactScore);
 }
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
@@ -163,6 +247,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           region: s.continent,
           ...changes,
           excludedAnomalyDays: excludedInCurrentBySite.get(s.id) ?? 0,
+          findings: buildPeriodFindings("site", s.id, s.name, current, previous, historyOk),
         };
       });
     });
@@ -193,7 +278,13 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         const previous = totalsOf(compareSeries);
         const changes = withChanges(current, previous, historyOk);
         const excludedAnomalyDays = siteIds.reduce((a, id) => a + (excludedInCurrentBySite.get(id) ?? 0), 0);
-        result.push({ region, siteCount: siteIds.length, ...changes, excludedAnomalyDays });
+        result.push({
+          region,
+          siteCount: siteIds.length,
+          ...changes,
+          excludedAnomalyDays,
+          findings: buildPeriodFindings("continent", region, region, current, previous, historyOk),
+        });
       }
       result.sort((a, b) => b.sessions - a.sessions);
       return result;
@@ -217,6 +308,20 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const previous = totalsOf(compareSeries);
       const changes = withChanges(current, previous, historyOk);
       const excludedAnomalyDays = sites.reduce((a, s) => a + (excludedInCurrentBySite.get(s.id) ?? 0), 0);
+      const findings = buildPeriodFindings("global", "global", "Tous sites", current, previous, historyOk);
+
+      // Synthesis bullets generated on the fly for exactly this period (reuses
+      // the same rule engine as the cron-generated weekly synthesis_history,
+      // see synthesis.ts) -- distinct from that stored weekly log, which stays
+      // a fixed cadence for the dedicated Synthèses tab/history.
+      const synthesisBullets = historyOk
+        ? generateSynthesis(findings, {
+            totalSessions: current.sessions,
+            prevTotalSessions: previous.sessions,
+            conversionRate: current.conversionRate,
+            prevConversionRate: previous.conversionRate,
+          }).bullets
+        : [];
 
       return {
         periodFrom: period.from,
@@ -228,6 +333,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         ...changes,
         series: currentSeries,
         excludedAnomalyDays,
+        findings,
+        synthesisBullets,
       };
     });
   });
@@ -290,8 +397,9 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return getGeoMismatches();
   });
 
-  app.post("/api/geo-mismatches/check", async () => {
-    const result = await checkGeoMismatches();
+  app.post<{ Querystring: { from?: string; to?: string; days?: string } }>("/api/geo-mismatches/check", async (req) => {
+    const period = parsePeriodQuery(req.query);
+    const result = await checkGeoMismatches(period.from, period.to);
     clearCache();
     return result;
   });
@@ -300,5 +408,27 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     const period = parsePeriodQuery(req.query);
     const cacheKey = `bots:${period.from}:${period.to}`;
     return cached(cacheKey, () => computeBotSignal(period));
+  });
+
+  // Manual trigger for the gap-scan backfill (see sync.ts#backfillGaps) so a
+  // hole in the data (e.g. "no data July 1-19") can be closed on demand
+  // instead of waiting for the next boot/wake-up.
+  app.post("/api/data/fill-gaps", async () => {
+    return backfillGaps();
+  });
+
+  // Runs the 3 optional Piwik Pro queries (AI-referral, channel bounces,
+  // Search Console) for one real site and reports success/failure + the raw
+  // error per query -- so a "0"/"non disponible" KPI on the dashboard can be
+  // diagnosed directly instead of only ever showing up in server logs.
+  // Meaningless in demo mode (no real Piwik Pro calls happen at all).
+  app.get("/api/diagnostics/optional-metrics", async (_req, reply) => {
+    if (config.mode !== "live") {
+      return reply.code(400).send({ error: "Diagnostics only meaningful in PIWIK_MODE=live." });
+    }
+    const sites = await getSites();
+    if (sites.length === 0) return reply.code(404).send({ error: "No tracked sites." });
+    const yesterday = addDaysIso(new Date().toISOString().slice(0, 10), -1);
+    return probeOptionalMetrics(sites[0].id, sites[0].name, yesterday);
   });
 }

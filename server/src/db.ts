@@ -43,22 +43,43 @@ export async function initSchema(): Promise<void> {
       rfq_conversions INTEGER NOT NULL DEFAULT 0,
       support_conversions INTEGER NOT NULL DEFAULT 0,
       downloads INTEGER NOT NULL DEFAULT 0,
-      ai_referral_sessions INTEGER NOT NULL DEFAULT 0,
-      organic_bounces INTEGER NOT NULL DEFAULT 0,
-      direct_bounces INTEGER NOT NULL DEFAULT 0,
-      search_console_clicks INTEGER NOT NULL DEFAULT 0,
-      search_console_impressions INTEGER NOT NULL DEFAULT 0,
+      -- Nullable on purpose: these 5 depend on Piwik Pro queries that can fail
+      -- independently of the core metrics above (unsupported column, an
+      -- integration like Search Console not configured for a given site, a
+      -- transient API error). NULL means "not fetched", distinct from a
+      -- confirmed 0 -- see the matching comment in piwik/types.ts.
+      ai_referral_sessions INTEGER,
+      organic_bounces INTEGER,
+      direct_bounces INTEGER,
+      search_console_clicks INTEGER,
+      search_console_impressions INTEGER,
       UNIQUE (site_id, date)
     );
     -- Progressive migration for databases created before these columns existed.
     ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS rfq_conversions INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS support_conversions INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS downloads INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS ai_referral_sessions INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS organic_bounces INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS direct_bounces INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS search_console_clicks INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS search_console_impressions INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS ai_referral_sessions INTEGER;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS organic_bounces INTEGER;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS direct_bounces INTEGER;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS search_console_clicks INTEGER;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS search_console_impressions INTEGER;
+    -- These 5 were originally NOT NULL DEFAULT 0 (a fetch failure silently
+    -- looked identical to a confirmed zero); relax existing installs so a
+    -- future failed fetch can be stored as NULL ("non disponible" in the UI)
+    -- instead of a misleading 0. Rows written before this change keep their
+    -- existing 0 -- there's no way to retroactively know which of those were
+    -- real zeros vs. past failures, so they're left as-is.
+    ALTER TABLE site_snapshots ALTER COLUMN ai_referral_sessions DROP NOT NULL;
+    ALTER TABLE site_snapshots ALTER COLUMN ai_referral_sessions DROP DEFAULT;
+    ALTER TABLE site_snapshots ALTER COLUMN organic_bounces DROP NOT NULL;
+    ALTER TABLE site_snapshots ALTER COLUMN organic_bounces DROP DEFAULT;
+    ALTER TABLE site_snapshots ALTER COLUMN direct_bounces DROP NOT NULL;
+    ALTER TABLE site_snapshots ALTER COLUMN direct_bounces DROP DEFAULT;
+    ALTER TABLE site_snapshots ALTER COLUMN search_console_clicks DROP NOT NULL;
+    ALTER TABLE site_snapshots ALTER COLUMN search_console_clicks DROP DEFAULT;
+    ALTER TABLE site_snapshots ALTER COLUMN search_console_impressions DROP NOT NULL;
+    ALTER TABLE site_snapshots ALTER COLUMN search_console_impressions DROP DEFAULT;
     CREATE INDEX IF NOT EXISTS idx_snapshots_date ON site_snapshots (date);
     CREATE INDEX IF NOT EXISTS idx_snapshots_site ON site_snapshots (site_id);
     -- Bulk per-period reads (overview/regions/sites/series) filter by date range

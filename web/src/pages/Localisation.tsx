@@ -1,23 +1,29 @@
 import { useEffect, useState } from "react";
 import { api, type GeoMismatch } from "../lib/api";
 import { GeoMismatchPanel } from "../components/GeoMismatchPanel";
+import { usePeriod } from "../lib/periodContext";
 
 export function Localisation() {
+  const { queryParams, from, to } = usePeriod();
   const [mismatches, setMismatches] = useState<GeoMismatch[]>([]);
   const [checking, setChecking] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    api.geoMismatches().then((data) => {
-      setMismatches(data);
-      setLoaded(true);
-    });
-  }, []);
+    setChecking(true);
+    api
+      .checkGeoMismatches(queryParams)
+      .then((data) => {
+        setMismatches(data);
+        setLoaded(true);
+      })
+      .finally(() => setChecking(false));
+  }, [queryParams]);
 
   async function handleCheck() {
     setChecking(true);
     try {
-      setMismatches(await api.checkGeoMismatches());
+      setMismatches(await api.checkGeoMismatches(queryParams));
     } finally {
       setChecking(false);
     }
@@ -30,8 +36,8 @@ export function Localisation() {
           <div>
             <h2 style={{ marginBottom: 4 }}>Cohérence géographique du trafic</h2>
             <p className="card-subtitle" style={{ margin: 0 }}>
-              Alerte si un pays inattendu représente au moins 20% du trafic d'un site (ex. trafic Inde sur le site UK), avec
-              répartition organique/direct du pays concerné et une première piste d'analyse.
+              Alerte si un pays inattendu représente au moins 20% du trafic d'un site sur {from} → {to}, avec répartition
+              organique/direct du pays concerné et une première piste d'analyse.
             </p>
           </div>
           <button className="primary-btn" onClick={handleCheck} disabled={checking}>

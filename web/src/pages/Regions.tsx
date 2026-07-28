@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, type RegionSummary, type DayPoint, type Finding } from "../lib/api";
+import { api, type RegionSummary, type DayPoint } from "../lib/api";
 import { RegionBarChart } from "../components/RegionBarChart";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatPct } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 export function Regions() {
@@ -13,14 +13,12 @@ export function Regions() {
   const [regions, setRegions] = useState<RegionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [series, setSeries] = useState<DayPoint[]>([]);
-  const [findings, setFindings] = useState<Finding[]>([]);
 
   useEffect(() => {
     api.regions(queryParams).then((data) => {
       setRegions(data);
       setSelected((current) => (current && data.some((r) => r.region === current) ? current : data[0]?.region ?? null));
     });
-    api.findings(200).then(setFindings);
   }, [queryParams]);
 
   useEffect(() => {
@@ -30,7 +28,6 @@ export function Regions() {
 
   const deltaLabel = periodComparisonLabel(compare);
   const selectedRegion = regions.find((r) => r.region === selected) ?? null;
-  const regionFindings = findings.filter((f) => f.entityId === selected);
 
   return (
     <div>
@@ -76,11 +73,11 @@ export function Regions() {
           <h3 className="section-title">SEO/GEO, signal bot & conversion — {selectedRegion.region}</h3>
           <div className="kpi-grid">
             <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selectedRegion.organicSessions)} deltaPct={selectedRegion.organicSessionsChangePct} deltaLabel={deltaLabel} />
-            <KpiTile label="Trafic référé par IA" value={formatCompactNumber(selectedRegion.aiReferralSessions)} deltaPct={selectedRegion.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
-            <KpiTile label="Clics Search Console" value={formatCompactNumber(selectedRegion.searchConsoleClicks)} deltaPct={selectedRegion.searchConsoleClicksChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Trafic référé par IA" value={formatCompactNumberOrNA(selectedRegion.aiReferralSessions)} deltaPct={selectedRegion.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Clics Search Console" value={formatCompactNumberOrNA(selectedRegion.searchConsoleClicks)} deltaPct={selectedRegion.searchConsoleClicksChangePct} deltaLabel={deltaLabel} />
             <KpiTile
               label="Trafic à faible engagement (signal bot)"
-              value={`${(selectedRegion.lowEngagementShare * 100).toFixed(1)}%`}
+              value={formatPctOrNA(selectedRegion.lowEngagementShare)}
               deltaPct={selectedRegion.lowEngagementShareChangePct}
               deltaIsGoodWhenUp={false}
               deltaLabel={deltaLabel}
@@ -101,7 +98,7 @@ export function Regions() {
           </div>
           <div className="card">
             <h2>Analyse & plan d'action — {selected}</h2>
-            <FindingsList findings={regionFindings} />
+            <FindingsList findings={selectedRegion.findings} />
           </div>
         </>
       )}
