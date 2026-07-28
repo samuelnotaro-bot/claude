@@ -128,10 +128,16 @@ body {
   letter-spacing: 0.04em;
 }
 
+.brand-logo {
+  display: block;
+  height: 34px;
+  width: auto;
+}
+
 .app-header .subtitle {
   color: rgba(255, 255, 255, 0.72);
   font-size: 13px;
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 .mode-badge {

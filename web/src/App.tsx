@@ -95,9 +95,9 @@ export function App() {
         <header className="brand-bar">
           <div className="app-header">
             <div>
-              {/* TODO: remplacer par le logo officiel Socomec (web/public/socomec-logo.svg) une fois le fichier fourni -- voir CTA/design de référence. */}
-              <h1>Socomec — Performance digitale</h1>
-              <div className="subtitle">Tendances de visibilité, trafic et conversions — sites à extension pays, par région</div>
+              {/* Recréation approximative du logo Socomec (pas le fichier vectoriel officiel) -- à remplacer par web/public/socomec-logo-white.svg dès que le vrai fichier est fourni. */}
+              <img src="/socomec-logo-white.svg" alt="Socomec — Innovative Power Solutions" className="brand-logo" />
+              <div className="subtitle">Performance digitale — trafic et conversions, sites à extension pays, par région</div>
             </div>
             <div className="header-controls">
               <PeriodSelector />
