@@ -389,16 +389,21 @@ visible dans le message affiché par le bouton "Combler les trous de
 données") mais n'empêche plus les autres sites/jours du même lot d'être
 traités.
 
-Piwik Pro applique aussi une limite d'appels API par minute (le chiffre exact
-dépend de votre offre). `server/src/piwik/client.ts` fait passer **tous** les
-appels par un limiteur à fenêtre glissante (`PIWIK_MAX_REQUESTS_PER_MINUTE`,
-défaut 60/min) au même point de passage que chaque requête HTTP, et gère les
-réponses 429 (respecte `Retry-After`, jusqu'à 3 tentatives) avant d'abandonner
-proprement -- géré par la résilience par item ci-dessus, donc un item qui
-échoue vraiment est retenté au prochain passage plutôt que de bloquer le
-reste. `geoMismatch.ts` a aussi été réduit à une seule requête Piwik Pro par
-site (au lieu de deux) en dérivant les totaux par pays de la répartition par
-canal déjà récupérée.
+Piwik Pro applique aussi une limite d'appels API par minute, confirmée par la
+doc officielle : **600/min pour les requêtes GET**, mais **60/min pour tout le
+reste** (POST/PUT/PATCH/DELETE, y compris "les requêtes complexes en POST même
+si elles ne font que lire" -- ce qui est exactement le fonctionnement de
+l'Analytics Query API). Comme toutes les métriques de cette app passent par ce
+endpoint POST, **60/min est la vraie limite qui s'applique** à quasiment tout
+le trafic Piwik Pro de l'app -- ce n'est pas une estimation prudente.
+`server/src/piwik/client.ts` fait passer **tous** les appels par un limiteur à
+fenêtre glissante (`PIWIK_MAX_REQUESTS_PER_MINUTE`, défaut 60/min) au même
+point de passage que chaque requête HTTP, et gère les réponses 429 (respecte
+`Retry-After`, jusqu'à 3 tentatives) avant d'abandonner proprement -- géré par
+la résilience par item ci-dessus, donc un item qui échoue vraiment est
+retenté au prochain passage plutôt que de bloquer le reste. `geoMismatch.ts` a
+aussi été réduit à une seule requête Piwik Pro par site (au lieu de deux) en
+dérivant les totaux par pays de la répartition par canal déjà récupérée.
 
 ## Fiabilité sur Render (démarrage et synchronisation)
 

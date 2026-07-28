@@ -18,13 +18,17 @@ export const config = {
   port: Number(env("PORT", "4000")),
   databaseUrl: env("DATABASE_URL"),
   backfillDays: Number(env("BACKFILL_DAYS", "90")),
-  // Piwik Pro enforces a per-minute API rate limit (exact figure depends on
-  // your plan/contract -- check Administration or your Piwik Pro contract).
-  // This app makes several calls per site per day synced (totals, channels,
-  // goals, downloads, AI-referral, bounces, Search Console), so on ~20 sites
-  // a naive unpaced sync or gap-fill can burst well past most plans' limits,
-  // which then shows up as silent sync failures (i.e. more data gaps).
-  // Lower this to match your actual plan if you still see 429s in the logs.
+  // Confirmed from Piwik Pro's official API rate-limit docs: GET (read)
+  // requests are capped at 600/min, but non-GET requests -- including any
+  // POST "even if they only retrieve data", which is how the Analytics Query
+  // API works -- are capped at 60/min. Every metric this app fetches (totals,
+  // channels, goals, downloads, AI-referral, bounces, Search Console) goes
+  // through that POST query endpoint, so 60/min is the real binding limit for
+  // basically all of this app's Piwik Pro traffic, not a guess. On ~20 sites
+  // (~6 calls/site/day synced) a naive unpaced sync or gap-fill would burst
+  // well past it, which then shows up as silent sync failures (data gaps).
+  // Lower this only if your specific plan/contract grants less than the
+  // documented 60/min.
   piwikMaxRequestsPerMinute: Number(env("PIWIK_MAX_REQUESTS_PER_MINUTE", "60")),
   // How many days back Piwik Pro actually keeps queryable data on this
   // account/plan (confirmed by the account owner -- not discoverable via the
