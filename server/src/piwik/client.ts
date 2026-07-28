@@ -38,16 +38,23 @@ const COLUMN_IDS = {
   // so a site without it configured doesn't break the rest of that site's sync.
   searchConsoleClicks: "search_engine_clicks",
   searchConsoleImpressions: "search_engine_impressions",
-  // UNVERIFIED against the live Piwik Pro org -- unlike every id above, this
-  // one was never confirmed against a real response (no test org access from
-  // this environment). Used by getMetricsRange to batch a whole date range
-  // into a handful of requests instead of one per day; `npm run
-  // test:connection` now probes it on one site over a 3-day window before
-  // any bulk use. If it's wrong every range query throws, and the caller
-  // (see sync.ts) falls back to the proven per-day path -- never silently
-  // wrong data, worst case is just no speed-up.
-  dayDimension: "date",
+  // Used by getMetricsRange to batch a whole date range into a handful of
+  // requests instead of one per day, via DAY_DIMENSION_COLUMN below.
+  // First guess ("date") was confirmed wrong against the live org: "Piwik
+  // Pro API error ... Dimension \"date\" does not exist." (400,
+  // source.parameter = columns.0.column_id). Piwik Pro's own community forum
+  // ("Getting time from Queries API") documents `{"column_id": "timestamp",
+  // "transformation_id": "to_date"}` as the way to get a day-level breakdown
+  // -- `timestamp` alone is full event/session time, `to_date` truncates it
+  // to the calendar day. Not confirmed against THIS org either (still no
+  // test account access), so it's still guarded the same way: `npm run
+  // test:connection` probes it first, and if it's wrong too, every range
+  // query throws with the real error and the caller (sync.ts) falls back to
+  // the proven per-day path -- never silently wrong data.
+  dayDimension: "timestamp",
 };
+
+const DAY_DIMENSION_COLUMN = { column_id: COLUMN_IDS.dayDimension, transformation_id: "to_date" };
 
 // Real `medium` values observed on this organization's traffic; anything else
 // (datasheet, notice, multisupports, application, packaging, product, ...) falls
@@ -380,7 +387,7 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
       date_from: dateFrom,
       date_to: dateTo,
       columns: [
-        { column_id: COLUMN_IDS.dayDimension },
+        DAY_DIMENSION_COLUMN,
         { column_id: COLUMN_IDS.sessions },
         { column_id: COLUMN_IDS.users },
         { column_id: COLUMN_IDS.pageviews },
@@ -392,37 +399,37 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
       website_id: siteId,
       date_from: dateFrom,
       date_to: dateTo,
-      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.sessions }],
+      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.sessions }],
     }),
     queryAnalyticsRange({
       website_id: siteId,
       date_from: dateFrom,
       date_to: dateTo,
-      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.goalDimension }, { column_id: COLUMN_IDS.goalConversions }],
+      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.goalDimension }, { column_id: COLUMN_IDS.goalConversions }],
     }),
     queryAnalyticsRange({
       website_id: siteId,
       date_from: dateFrom,
       date_to: dateTo,
-      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.downloads }],
+      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.downloads }],
     }),
     queryAnalyticsRange({
       website_id: siteId,
       date_from: dateFrom,
       date_to: dateTo,
-      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
+      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
     }),
     queryAnalyticsRange({
       website_id: siteId,
       date_from: dateFrom,
       date_to: dateTo,
-      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
+      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
     }),
     queryAnalyticsRange({
       website_id: siteId,
       date_from: dateFrom,
       date_to: dateTo,
-      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
+      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
     }),
   ]);
 

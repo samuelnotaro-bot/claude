@@ -140,9 +140,9 @@ body {
   background-size: auto 100%;
   background-position: right center;
   background-repeat: no-repeat;
-  opacity: 0.8;
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 30%, black 68%, black 100%);
-  mask-image: linear-gradient(to right, transparent 0%, transparent 30%, black 68%, black 100%);
+  opacity: 0.96;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 42%, black 62%, black 100%);
+  mask-image: linear-gradient(to right, transparent 0%, transparent 42%, black 62%, black 100%);
 }
 
 /*
@@ -392,57 +392,43 @@ body {
 
 .card + .card { margin-top: 16px; }
 
+/*
+ * Bandeau deux panneaux façon socomec.fr : bloc bleu plein avec le texte à
+ * gauche, photo nette et non délavée à droite -- pas de dégradé posé sur la
+ * photo elle-même, coins nets (l'arrondi façon "bulle" ne fait plus partie de
+ * la charte retenue).
+ */
 .hero-banner {
-  position: relative;
-  height: 140px;
-  border-radius: 8px;
-  overflow: hidden;
+  display: flex;
+  height: 150px;
   margin-bottom: 16px;
-  background-color: var(--brand-c1-700);
-  background-image: linear-gradient(
-    100deg,
-    color-mix(in srgb, var(--brand-c1-800) 90%, transparent) 0%,
-    color-mix(in srgb, var(--brand-c1-600) 78%, transparent) 55%,
-    color-mix(in srgb, var(--brand-c1-500) 60%, transparent) 100%
-  );
+  overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
-/*
- * Photo confinée à un panneau à droite (pas de pleine largeur) : hauteur
- * calée sur celle du bandeau sans aucun recadrage vertical (zéro zoom, la
- * scène complète reste visible), fondu progressif vers le dégradé bleu côté
- * gauche via un masque plutôt qu'une coupe nette.
- */
-.hero-banner-photo {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background-size: auto 100%;
-  background-position: right center;
-  background-repeat: no-repeat;
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 28%, black 62%, black 100%);
-  mask-image: linear-gradient(to right, transparent 0%, transparent 28%, black 62%, black 100%);
-}
-
-.hero-banner-caption {
-  position: relative;
-  z-index: 1;
-  height: 100%;
+.hero-banner-text {
+  flex: 0 0 38%;
+  min-width: 220px;
   display: flex;
   align-items: center;
-  padding: 0 24px;
+  padding: 0 28px;
+  background: linear-gradient(55deg, rgba(0, 81, 157, 0) 0%, rgba(0, 81, 157, 0.8) 40%, rgb(35, 44, 119) 100%), var(--brand-c1-700);
   color: #ffffff;
-  font-weight: 700;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.hero-banner-photo {
+  flex: 1;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 @media (max-width: 640px) {
-  .hero-banner { height: 96px; }
-  .hero-banner-caption { font-size: 11px; padding: 0 16px; }
+  .hero-banner { height: 110px; }
+  .hero-banner-text { font-size: 14px; padding: 0 16px; flex-basis: 45%; }
 }
 
 .card h2 {

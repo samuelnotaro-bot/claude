@@ -389,14 +389,20 @@ backfill complet de 26 mois sur ~20 sites tient dans ~7 requêtes par site
 (≈140 requêtes au total) au lieu d'environ 7 × 791 × 20 ≈ 110 000 -- largement
 sous la limite de débit même sur l'historique complet.
 
-Cette dimension "jour" (`COLUMN_IDS.dayDimension`, actuellement `"date"`)
-n'a **pas** pu être vérifiée contre l'organisation Piwik Pro réelle (pas
-d'accès à un compte de test pendant le développement) -- contrairement aux
-autres `column_id` de ce fichier. `npm run test:connection` teste désormais
-ce mode sur un site avant tout usage en masse et affiche clairement si ça
-fonctionne. Si le `column_id` s'avère incorrect, chaque appel groupé échoue
-proprement et retombe automatiquement sur l'ancien mode jour par jour (plus
-lent mais éprouvé) -- jamais de données silencieusement fausses, dans le pire
+Cette dimension "jour" (`COLUMN_IDS.dayDimension` + `DAY_DIMENSION_COLUMN`,
+actuellement `{"column_id": "timestamp", "transformation_id": "to_date"}`,
+d'après le forum communautaire Piwik Pro -- un premier essai avec
+`"column_id": "date"` seul a échoué en direct contre l'organisation réelle :
+`Dimension "date" does not exist.`) n'a toujours **pas** pu être vérifiée
+noir sur blanc contre l'organisation Piwik Pro réelle (pas d'accès à un
+compte de test pendant le développement) -- contrairement aux autres
+`column_id` de ce fichier. `npm run test:connection` teste désormais ce mode
+sur un site avant tout usage en masse et affiche clairement si ça fonctionne.
+Si le `column_id` s'avère incorrect, chaque appel groupé échoue proprement et
+retombe automatiquement sur l'ancien mode jour par jour pour les plages
+courtes (≤14 jours) -- au-delà, l'échec remonte immédiatement avec le message
+d'erreur réel plutôt que de retomber en silence sur des dizaines d'heures de
+requêtes jour par jour. Jamais de données silencieusement fausses, dans le pire
 cas juste pas de gain de vitesse.
 
 `server/src/sync.ts#backfillGaps` applique la limite de rétention à son
