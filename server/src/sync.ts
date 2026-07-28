@@ -1,5 +1,5 @@
 import { getSites, upsertSnapshot, getEarliestSnapshotDate, getSnapshotDatesBySite, type SiteRecord } from "./repo.js";
-import { fetchDailyMetrics } from "./metrics.js";
+import { fetchDailyMetrics, fetchMetricsRange } from "./metrics.js";
 import { clearCache } from "./cache.js";
 import { addDaysIso } from "./period.js";
 import { config } from "./config.js";
@@ -46,6 +46,49 @@ export async function syncDay(date: string): Promise<{ ok: number; failed: numbe
     for (const r of results) {
       if (r.ok) ok++;
       else failed++;
+    }
+  }
+  return { ok, failed };
+}
+
+/**
+ * Fetches+stores one site's whole [dateFrom, dateTo] range in a handful of
+ * batched Piwik Pro requests (see metrics.fetchMetricsRange). Falls back to
+ * the proven per-day loop (syncSiteDate for each date) if the batch fails for
+ * any reason -- a wrong column id, a transient API error, anything -- so a
+ * bad assumption in the batching code degrades to "no speed-up" rather than
+ * "this site's history silently doesn't sync."
+ */
+async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number }> {
+  try {
+    const days = await fetchMetricsRange(site.id, dateFrom, dateTo);
+    for (const day of days) await upsertSnapshot(day);
+    return { ok: days.length, failed: 0 };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo}, falling back to per-day fetch: ${message}`);
+  }
+  let ok = 0;
+  let failed = 0;
+  for (let d = dateFrom; d <= dateTo; d = addDaysIso(d, 1)) {
+    const r = await syncSiteDate(site, d);
+    if (r.ok) ok++;
+    else failed++;
+  }
+  return { ok, failed };
+}
+
+/** Same as syncDay but for a whole date range, one batched request set per site instead of one per (site, day). */
+export async function syncDateRange(dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number }> {
+  const sites = await getSites();
+  let ok = 0;
+  let failed = 0;
+  for (let i = 0; i < sites.length; i += CONCURRENCY) {
+    const batch = sites.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map((site) => syncSiteRange(site, dateFrom, dateTo)));
+    for (const r of results) {
+      ok += r.ok;
+      failed += r.failed;
     }
   }
   return { ok, failed };

@@ -11,6 +11,21 @@ export async function fetchDailyMetrics(siteId: string, date: string): Promise<D
   return generateDemoMetrics(siteId, date, new Date());
 }
 
+/**
+ * Same data as fetchDailyMetrics, one entry per day in [dateFrom, dateTo],
+ * batched into a handful of Piwik Pro requests instead of one call per day
+ * (see piwik/client.ts getMetricsRange) -- what makes a real multi-month
+ * backfill practical. In demo mode this is just cheap local generation, no
+ * batching concern.
+ */
+export async function fetchMetricsRange(siteId: string, dateFrom: string, dateTo: string): Promise<DailySiteMetrics[]> {
+  if (config.mode === "live") {
+    return piwik.getMetricsRange(siteId, dateFrom, dateTo);
+  }
+  const now = new Date();
+  return dateRange(new Date(dateFrom), new Date(dateTo)).map((date) => generateDemoMetrics(siteId, date, now));
+}
+
 export async function fetchCountryChannelBreakdown(siteId: string, dateFrom: string, dateTo: string): Promise<CountryChannelRow[]> {
   if (config.mode === "live") {
     return piwik.getCountryChannelBreakdown(siteId, dateFrom, dateTo);

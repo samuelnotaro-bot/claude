@@ -2,6 +2,7 @@ import { config } from "../config.js";
 import type { PiwikApp, DailySiteMetrics, Channel } from "./types.js";
 import { categorizeGoal } from "../goalCategories.js";
 import { isAiReferrerSource } from "../aiReferrers.js";
+import { addDaysIso, daysBetweenInclusive } from "../period.js";
 
 /**
  * Thin client for the Piwik Pro REST APIs (Management API v2 + Analytics Query API v1).
@@ -37,6 +38,15 @@ const COLUMN_IDS = {
   // so a site without it configured doesn't break the rest of that site's sync.
   searchConsoleClicks: "search_engine_clicks",
   searchConsoleImpressions: "search_engine_impressions",
+  // UNVERIFIED against the live Piwik Pro org -- unlike every id above, this
+  // one was never confirmed against a real response (no test org access from
+  // this environment). Used by getMetricsRange to batch a whole date range
+  // into a handful of requests instead of one per day; `npm run
+  // test:connection` now probes it on one site over a 3-day window before
+  // any bulk use. If it's wrong every range query throws, and the caller
+  // (see sync.ts) falls back to the proven per-day path -- never silently
+  // wrong data, worst case is just no speed-up.
+  dayDimension: "date",
 };
 
 // Real `medium` values observed on this organization's traffic; anything else
@@ -214,6 +224,34 @@ async function queryAnalytics(body: Record<string, unknown>): Promise<QueryRow[]
   });
 }
 
+// A single-day query returns a handful of rows (one per channel/goal at most),
+// no pagination needed -- but a multi-day range broken down by day (and
+// sometimes also by channel/goal/source within each day) can run into the
+// thousands of rows for a long backfill. Loop on offset/limit until a page
+// comes back short, with a hard cap so a misbehaving response can't spin
+// forever.
+const RANGE_QUERY_PAGE_SIZE = 1000;
+const MAX_RANGE_QUERY_PAGES = 50;
+
+async function queryAnalyticsRange(body: Record<string, unknown>): Promise<QueryRow[]> {
+  const rows: QueryRow[] = [];
+  for (let page = 0; page < MAX_RANGE_QUERY_PAGES; page++) {
+    const offset = page * RANGE_QUERY_PAGE_SIZE;
+    const pageRows = await queryAnalytics({ ...body, limit: RANGE_QUERY_PAGE_SIZE, offset });
+    rows.push(...pageRows);
+    if (pageRows.length < RANGE_QUERY_PAGE_SIZE) break;
+  }
+  return rows;
+}
+
+function extractDay(row: QueryRow): string {
+  const value = row[COLUMN_IDS.dayDimension];
+  const raw = Array.isArray(value) ? value[0] ?? value[1] : value;
+  // Robust to either a pure "YYYY-MM-DD" or a full "YYYY-MM-DDTHH:mm:ssZ" --
+  // the first 10 characters are the calendar day either way.
+  return String(raw ?? "").slice(0, 10);
+}
+
 export async function getDailyMetrics(siteId: string, date: string): Promise<DailySiteMetrics> {
   const [totals] = await queryAnalytics({
     website_id: siteId,
@@ -302,6 +340,220 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     searchConsoleClicks: searchConsole.value.clicks,
     searchConsoleImpressions: searchConsole.value.impressions,
   };
+}
+
+/**
+ * Same shape of data as getDailyMetrics, but for a whole [dateFrom, dateTo]
+ * range in ~7 requests total instead of ~7 requests PER DAY -- each query
+ * adds COLUMN_IDS.dayDimension as a breakdown dimension so one call returns
+ * every day in the range at once. This is what makes a real multi-month (or
+ * multi-year) backfill practical against Piwik Pro's per-minute rate limit.
+ *
+ * Relies on the unverified `dayDimension` column id (see COLUMN_IDS comment).
+ * Throws if anything about that assumption is wrong (bad column id, or a
+ * response shape wildly inconsistent with "one row per calendar day") --
+ * callers must catch and fall back to per-day getDailyMetrics calls, see
+ * sync.ts. Never returns partial/guessed data.
+ */
+export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: string): Promise<DailySiteMetrics[]> {
+  const expectedDays = daysBetweenInclusive(dateFrom, dateTo);
+  // Loose upper bound sanity check: a day x channel/goal/source breakdown
+  // shouldn't realistically exceed ~40 rows/day (channels + goals + sources
+  // combined comfortably fit under that for any real site). If the day
+  // dimension is actually behaving as a per-event/per-visit timestamp
+  // instead of a calendar-day bucket, row counts blow past this immediately
+  // and we bail out rather than silently misgroup thousands of rows.
+  const maxPlausibleRows = expectedDays * 40 + 100;
+
+  function assertPlausible(rows: QueryRow[], label: string): void {
+    if (rows.length > maxPlausibleRows) {
+      throw new Error(
+        `[piwik] range query "${label}" for ${siteId} returned ${rows.length} rows for ${expectedDays} day(s) -- ` +
+          `far more than plausible for a day-bucketed breakdown, dayDimension column id is probably wrong`
+      );
+    }
+  }
+
+  const [totalsRows, channelRows, goalRows, downloadRows, sourceRows, bounceRows, gscRows] = await Promise.all([
+    queryAnalyticsRange({
+      website_id: siteId,
+      date_from: dateFrom,
+      date_to: dateTo,
+      columns: [
+        { column_id: COLUMN_IDS.dayDimension },
+        { column_id: COLUMN_IDS.sessions },
+        { column_id: COLUMN_IDS.users },
+        { column_id: COLUMN_IDS.pageviews },
+        { column_id: COLUMN_IDS.goalConversions },
+        { column_id: COLUMN_IDS.bounceRate },
+      ],
+    }),
+    queryAnalyticsRange({
+      website_id: siteId,
+      date_from: dateFrom,
+      date_to: dateTo,
+      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.sessions }],
+    }),
+    queryAnalyticsRange({
+      website_id: siteId,
+      date_from: dateFrom,
+      date_to: dateTo,
+      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.goalDimension }, { column_id: COLUMN_IDS.goalConversions }],
+    }),
+    queryAnalyticsRange({
+      website_id: siteId,
+      date_from: dateFrom,
+      date_to: dateTo,
+      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.downloads }],
+    }),
+    queryAnalyticsRange({
+      website_id: siteId,
+      date_from: dateFrom,
+      date_to: dateTo,
+      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
+    }),
+    queryAnalyticsRange({
+      website_id: siteId,
+      date_from: dateFrom,
+      date_to: dateTo,
+      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
+    }),
+    queryAnalyticsRange({
+      website_id: siteId,
+      date_from: dateFrom,
+      date_to: dateTo,
+      columns: [{ column_id: COLUMN_IDS.dayDimension }, { column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
+    }),
+  ]);
+
+  assertPlausible(totalsRows, "totals");
+  assertPlausible(channelRows, "channels");
+  assertPlausible(goalRows, "goals");
+  assertPlausible(downloadRows, "downloads");
+  assertPlausible(sourceRows, "sources");
+  assertPlausible(bounceRows, "bounces");
+  assertPlausible(gscRows, "search-console");
+
+  interface DayAccumulator {
+    sessions: number;
+    users: number;
+    pageviews: number;
+    goalConversions: number;
+    bounceRate: number;
+    channels: Record<Channel, number>;
+    rfqConversions: number;
+    supportConversions: number;
+    downloads: number;
+    aiReferralSessions: number;
+    organicBounces: number;
+    directBounces: number;
+    searchConsoleClicks: number;
+    searchConsoleImpressions: number;
+  }
+
+  const byDay = new Map<string, DayAccumulator>();
+  function dayBucket(date: string): DayAccumulator {
+    let bucket = byDay.get(date);
+    if (!bucket) {
+      bucket = {
+        sessions: 0,
+        users: 0,
+        pageviews: 0,
+        goalConversions: 0,
+        bounceRate: 0,
+        channels: { organic: 0, direct: 0, referral: 0, paid: 0, social: 0, email: 0, other: 0 },
+        rfqConversions: 0,
+        supportConversions: 0,
+        downloads: 0,
+        aiReferralSessions: 0,
+        organicBounces: 0,
+        directBounces: 0,
+        searchConsoleClicks: 0,
+        searchConsoleImpressions: 0,
+      };
+      byDay.set(date, bucket);
+    }
+    return bucket;
+  }
+  // Every day in the range gets a bucket up front -- a day with zero Piwik
+  // Pro rows (no traffic that day) still gets a real zero-filled entry,
+  // exactly like getDailyMetrics does for a single quiet day.
+  for (let d = dateFrom; d <= dateTo; d = addDaysIso(d, 1)) dayBucket(d);
+
+  for (const row of totalsRows) {
+    const bucket = dayBucket(extractDay(row));
+    bucket.sessions = Number(row[COLUMN_IDS.sessions] ?? 0);
+    bucket.users = Number(row[COLUMN_IDS.users] ?? 0);
+    bucket.pageviews = Number(row[COLUMN_IDS.pageviews] ?? 0);
+    bucket.goalConversions = Number(row[COLUMN_IDS.goalConversions] ?? 0);
+    bucket.bounceRate = Number(row[COLUMN_IDS.bounceRate] ?? 0);
+  }
+  for (const row of channelRows) {
+    const bucket = dayBucket(extractDay(row));
+    const label = String(row[COLUMN_IDS.channelDimension] ?? "");
+    const channel = CHANNEL_MAP[label] ?? "other";
+    bucket.channels[channel] += Number(row[COLUMN_IDS.sessions] ?? 0);
+  }
+  for (const row of goalRows) {
+    const bucket = dayBucket(extractDay(row));
+    const value = row[COLUMN_IDS.goalDimension];
+    const goalName = Array.isArray(value) ? value[1] : null;
+    if (!goalName) continue;
+    const category = categorizeGoal(goalName);
+    const count = Number(row[COLUMN_IDS.goalConversions] ?? 0);
+    if (category === "rfq") bucket.rfqConversions += count;
+    else if (category === "support") bucket.supportConversions += count;
+  }
+  for (const row of downloadRows) {
+    const bucket = dayBucket(extractDay(row));
+    bucket.downloads = Number(row[COLUMN_IDS.downloads] ?? 0);
+  }
+  for (const row of sourceRows) {
+    const value = row[COLUMN_IDS.sourceDimension];
+    const source = String(Array.isArray(value) ? value[1] ?? value[0] : value ?? "");
+    if (!source || !isAiReferrerSource(source)) continue;
+    const bucket = dayBucket(extractDay(row));
+    bucket.aiReferralSessions += Number(row[COLUMN_IDS.sessions] ?? 0);
+  }
+  for (const row of bounceRows) {
+    const bucket = dayBucket(extractDay(row));
+    const label = String(row[COLUMN_IDS.channelDimension] ?? "");
+    const count = Number(row[COLUMN_IDS.bounces] ?? 0);
+    if (label === "organic") bucket.organicBounces += count;
+    else if (label === "direct") bucket.directBounces += count;
+  }
+  for (const row of gscRows) {
+    const bucket = dayBucket(extractDay(row));
+    bucket.searchConsoleClicks = Number(row[COLUMN_IDS.searchConsoleClicks] ?? 0);
+    bucket.searchConsoleImpressions = Number(row[COLUMN_IDS.searchConsoleImpressions] ?? 0);
+  }
+
+  return [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, bucket]) => ({
+      siteId,
+      date,
+      sessions: bucket.sessions,
+      users: bucket.users,
+      pageviews: bucket.pageviews,
+      goalConversions: bucket.goalConversions,
+      bounceRate: bucket.bounceRate,
+      avgSessionDurationSec: 0,
+      channels: bucket.channels,
+      rfqConversions: bucket.rfqConversions,
+      supportConversions: bucket.supportConversions,
+      downloads: bucket.downloads,
+      // Range mode has no way to isolate a single-day failure the way
+      // getDailyMetrics's Promise.all-with-try/catch-per-query does -- these
+      // 3 optional queries either succeed for the whole range (real numbers
+      // for every day) or the whole getMetricsRange call throws and the
+      // caller falls back to per-day fetching, so null never applies here.
+      aiReferralSessions: bucket.aiReferralSessions,
+      organicBounces: bucket.organicBounces,
+      directBounces: bucket.directBounces,
+      searchConsoleClicks: bucket.searchConsoleClicks,
+      searchConsoleImpressions: bucket.searchConsoleImpressions,
+    }));
 }
 
 interface ProbeResult<T> {

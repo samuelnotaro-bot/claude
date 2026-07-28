@@ -378,12 +378,26 @@ ce qui est actuellement stocké dans la base Postgres locale de l'app.
 `BACKFILL_DAYS` (90 par défaut) ne récupère que les 90 derniers jours au
 premier démarrage -- pour remonter plus loin (jusqu'aux 26 mois que Piwik Pro
 conserve réellement), il faut soit augmenter `BACKFILL_DAYS`, soit relancer
-un backfill ciblé sur une plage plus ancienne. À l'architecture actuelle
-(une requête par site et par jour), remonter 26 mois en arrière sur ~20 sites
-représente un volume d'appels Piwik Pro très important au régime du rate
-limit (voir plus bas) -- un backfill par plage de dates en un seul appel
-(plutôt que jour par jour) réduirait ce volume de façon importante mais n'est
-pas encore implémenté.
+un backfill ciblé sur une plage plus ancienne.
+
+`npm run backfill` (et `backfillGaps`, "Combler les trous de données") ne font
+plus une requête par site et par jour : `getMetricsRange`
+(`server/src/piwik/client.ts`) regroupe chaque type de requête (totaux,
+canaux, objectifs, ...) sur toute la plage de dates en un seul appel par site,
+avec une dimension "jour" pour ventiler les résultats. Concrètement, un
+backfill complet de 26 mois sur ~20 sites tient dans ~7 requêtes par site
+(≈140 requêtes au total) au lieu d'environ 7 × 791 × 20 ≈ 110 000 -- largement
+sous la limite de débit même sur l'historique complet.
+
+Cette dimension "jour" (`COLUMN_IDS.dayDimension`, actuellement `"date"`)
+n'a **pas** pu être vérifiée contre l'organisation Piwik Pro réelle (pas
+d'accès à un compte de test pendant le développement) -- contrairement aux
+autres `column_id` de ce fichier. `npm run test:connection` teste désormais
+ce mode sur un site avant tout usage en masse et affiche clairement si ça
+fonctionne. Si le `column_id` s'avère incorrect, chaque appel groupé échoue
+proprement et retombe automatiquement sur l'ancien mode jour par jour (plus
+lent mais éprouvé) -- jamais de données silencieusement fausses, dans le pire
+cas juste pas de gain de vitesse.
 
 `server/src/sync.ts#backfillGaps` applique la limite de rétention à son
 scan : les jours manquants plus vieux que `PIWIK_DATA_RETENTION_DAYS` ne sont

@@ -1,6 +1,7 @@
 import { config } from "./config.js";
 import * as piwik from "./piwik/client.js";
 import { isAppInScope } from "./siteScope.js";
+import { addDaysIso } from "./period.js";
 
 /**
  * Vérifie que les identifiants Piwik Pro fonctionnent (auth OAuth2 + lecture des
@@ -31,6 +32,41 @@ async function testConnection(): Promise<void> {
   console.log(`\n[test:connection] ${outOfScope.length} site(s) ignoré(s) (hors périmètre):`);
   for (const app of outOfScope) {
     console.log(`  - ${app.name.padEnd(24)} ${app.urls.join(", ")}`);
+  }
+
+  await testRangeBatching(inScope[0]);
+}
+
+/**
+ * getMetricsRange (server/src/piwik/client.ts) batches a whole date range into
+ * a handful of requests instead of one per day -- this is what makes a real
+ * multi-month backfill practical. It relies on a `date` column id as a
+ * day-breakdown dimension that was never confirmed against a real Piwik Pro
+ * response (no test org access while building it). Probe it here, on one
+ * site over a short 3-day window, before any bulk backfill relies on it.
+ */
+async function testRangeBatching(app: { id: string; name: string } | undefined): Promise<void> {
+  console.log("\n[test:connection] Vérification du batching par plage de dates (getMetricsRange)...");
+  if (!app) {
+    console.log("[test:connection] Aucun site dans le périmètre -- impossible de tester.");
+    return;
+  }
+  const to = new Date().toISOString().slice(0, 10);
+  const from = addDaysIso(to, -2);
+  try {
+    const days = await piwik.getMetricsRange(app.id, from, to);
+    console.log(
+      `[test:connection] OK -- ${days.length} jour(s) reçus pour ${app.name} sur ${from} → ${to} en 7 requêtes groupées ` +
+        `(au lieu de ~21 requêtes une par une). Le backfill complet utilisera ce mode.`
+    );
+  } catch (err) {
+    console.log(
+      `[test:connection] ÉCHEC -- ${err instanceof Error ? err.message : String(err)}\n` +
+        "Le column_id du dimension 'jour' (dayDimension dans piwik/client.ts, actuellement \"date\") est probablement " +
+        "incorrect pour cette organisation. Ce n'est pas bloquant : le backfill retombera automatiquement sur le mode " +
+        "jour par jour (plus lent, mais fiable) pour chaque site où ce test échoue. Ajustez la valeur dans " +
+        "COLUMN_IDS.dayDimension si vous connaissez le bon identifiant (API Explorer Piwik Pro ou support)."
+    );
   }
 }
 
