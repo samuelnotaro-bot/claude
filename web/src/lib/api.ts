@@ -266,6 +266,7 @@ export interface DeepBackfillResult {
   dateFrom: string | null;
   dateTo: string | null;
   daysAdded: number;
+  sitesExtended: number;
   ok: number;
   failed: number;
   batchError?: string;

@@ -163,6 +163,28 @@ export async function getEarliestSnapshotDate(): Promise<string | null> {
   return rows[0]?.earliest ?? null;
 }
 
+/**
+ * Same as getEarliestSnapshotDate, but per site rather than one global
+ * minimum -- a global MIN() is misleading when sites don't all have the same
+ * amount of history (e.g. one site got a handful of very old rows from an
+ * interrupted run while the rest didn't): it makes it look like "there's
+ * nothing older to fetch" even though most sites still have a large gap.
+ * Used by sync.ts#extendHistoryToRetentionFloor to extend each site's own
+ * history independently instead of trusting a single shared earliest date.
+ */
+export async function getEarliestSnapshotDateBySite(siteIds: string[]): Promise<Map<string, string | null>> {
+  const byId = new Map<string, string | null>(siteIds.map((id) => [id, null]));
+  if (siteIds.length === 0) return byId;
+  const { rows } = await pool.query(
+    `SELECT site_id, MIN(date) AS earliest FROM site_snapshots WHERE site_id = ANY($1) GROUP BY site_id`,
+    [siteIds]
+  );
+  for (const r of rows) {
+    byId.set(r.site_id, r.earliest);
+  }
+  return byId;
+}
+
 /** Most recent date with any snapshot data at all -- used at boot to catch up on days missed while asleep (see index.ts). */
 export async function getLatestSnapshotDate(): Promise<string | null> {
   const { rows } = await pool.query(`SELECT MAX(date) AS latest FROM site_snapshots`);

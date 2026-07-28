@@ -91,7 +91,7 @@ export function Overview() {
       } else {
         const r = status.result;
         setDeepBackfillMessage(
-          `${r.dateFrom} → ${r.dateTo} récupéré (${r.daysAdded} jour(s))` +
+          `${r.dateFrom} → ${r.dateTo} récupéré pour ${r.sitesExtended} site(s)` +
             (r.failed > 0 ? ` -- ${r.failed} échec(s) Piwik Pro, relancez pour réessayer` : "") +
             (r.batchError ? ` -- erreur Piwik Pro : ${r.batchError}` : "") +
             "."

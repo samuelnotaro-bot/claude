@@ -1,4 +1,11 @@
-import { getSites, upsertSnapshot, getEarliestSnapshotDate, getSnapshotDatesBySite, type SiteRecord } from "./repo.js";
+import {
+  getSites,
+  upsertSnapshot,
+  getEarliestSnapshotDate,
+  getEarliestSnapshotDateBySite,
+  getSnapshotDatesBySite,
+  type SiteRecord,
+} from "./repo.js";
 import { fetchDailyMetrics, fetchMetricsRange } from "./metrics.js";
 import { clearCache } from "./cache.js";
 import { addDaysIso, daysBetweenInclusive } from "./period.js";
@@ -237,6 +244,7 @@ export interface ExtendHistoryResult {
   dateFrom: string | null;
   dateTo: string | null;
   daysAdded: number;
+  sitesExtended: number;
   ok: number;
   failed: number;
   /** Real Piwik Pro error from the first failed range batch, if any -- see MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK. */
@@ -252,27 +260,71 @@ export interface ExtendHistoryResult {
  * keeps up to PIWIK_DATA_RETENTION_DAYS.
  *
  * This extends the *other* direction: from the retention floor up to (but
- * excluding) the current earliest date, in one batched syncDateRange call --
- * on Render's free plan there's no Shell tab to run `npm run backfill`
- * manually, so this is exposed as POST /api/data/deep-backfill (same
- * dashboard auth as everything else) to be triggered from the UI instead.
+ * excluding) each site's own earliest known date -- computed per site, not
+ * from a single global MIN(date), because that global minimum is misleading
+ * the moment sites don't all have the same amount of history (e.g. one site
+ * picked up a handful of very old rows from an interrupted run while the
+ * rest didn't: a global "earliest" would then look like it's already at the
+ * retention floor and skip everyone, even though most sites still have a
+ * large gap). On Render's free plan there's no Shell tab to run `npm run
+ * backfill` manually, so this is exposed as POST /api/data/deep-backfill
+ * (same dashboard auth as everything else) to be triggered from the UI.
  */
 export async function extendHistoryToRetentionFloor(
   onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
 ): Promise<ExtendHistoryResult> {
-  const empty: ExtendHistoryResult = { extended: false, dateFrom: null, dateTo: null, daysAdded: 0, ok: 0, failed: 0 };
-  const earliest = await getEarliestSnapshotDate();
-  if (!earliest) return empty;
+  const empty: ExtendHistoryResult = { extended: false, dateFrom: null, dateTo: null, daysAdded: 0, sitesExtended: 0, ok: 0, failed: 0 };
+  const sites = await getSites();
+  if (sites.length === 0) return empty;
 
   const today = new Date().toISOString().slice(0, 10);
+  const yesterday = addDaysIso(today, -1);
   const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
-  const dateTo = addDaysIso(earliest, -1);
-  if (retentionFloor > dateTo) return empty; // already at (or past) the retention floor, nothing older to fetch
+  const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
 
-  const dateFrom = retentionFloor;
-  console.log(`[sync] extending history back to the retention floor: ${dateFrom} -> ${dateTo} (${daysBetweenInclusive(dateFrom, dateTo)} day(s), batched by date range)...`);
-  const result = await syncDateRange(dateFrom, dateTo, onSiteProgress);
+  const targets = sites
+    .map((site) => {
+      const earliest = earliestBySite.get(site.id) ?? null;
+      // No data at all yet for this site -> fetch the whole window, not just
+      // "before" some earliest date that doesn't exist.
+      const dateTo = earliest ? addDaysIso(earliest, -1) : yesterday;
+      return { site, dateFrom: retentionFloor, dateTo };
+    })
+    .filter((t) => t.dateFrom <= t.dateTo); // already at (or past) the retention floor for this site
+
+  if (targets.length === 0) return empty;
+
+  console.log(`[sync] extending history back to the retention floor for ${targets.length}/${sites.length} site(s) (each site's own gap, from ${retentionFloor})...`);
+
+  let ok = 0;
+  let failed = 0;
+  let done = 0;
+  let batchError: string | undefined;
+  let latestDateTo = targets[0].dateTo;
+  for (let i = 0; i < targets.length; i += CONCURRENCY) {
+    const batch = targets.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map((t) => syncSiteRange(t.site, t.dateFrom, t.dateTo)));
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      ok += r.ok;
+      failed += r.failed;
+      done++;
+      if (r.batchError && !batchError) batchError = r.batchError;
+      if (batch[j].dateTo > latestDateTo) latestDateTo = batch[j].dateTo;
+    }
+    onSiteProgress?.(done, targets.length);
+  }
+
   clearCache();
-  console.log(`[sync] history extension done: ${result.ok} (site, day) pair(s) filled, ${result.failed} failed.${result.batchError ? ` First batch error: ${result.batchError}` : ""}`);
-  return { extended: true, dateFrom, dateTo, daysAdded: daysBetweenInclusive(dateFrom, dateTo), ok: result.ok, failed: result.failed, batchError: result.batchError };
+  console.log(`[sync] history extension done: ${ok} (site, day) pair(s) filled across ${targets.length} site(s), ${failed} failed.${batchError ? ` First batch error: ${batchError}` : ""}`);
+  return {
+    extended: true,
+    dateFrom: retentionFloor,
+    dateTo: latestDateTo,
+    daysAdded: daysBetweenInclusive(retentionFloor, latestDateTo),
+    sitesExtended: targets.length,
+    ok,
+    failed,
+    batchError,
+  };
 }
