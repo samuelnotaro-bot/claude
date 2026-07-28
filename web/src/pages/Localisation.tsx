@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type GeoMismatch } from "../lib/api";
 import { GeoMismatchPanel } from "../components/GeoMismatchPanel";
+import { HeroBanner } from "../components/HeroBanner";
 import { usePeriod } from "../lib/periodContext";
 
 export function Localisation() {
@@ -35,6 +36,7 @@ export function Localisation() {
 
   return (
     <div>
+      <HeroBanner image="/intrus.png" caption="Détection des anomalies géographiques" />
       <div className="card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>

@@ -8,6 +8,7 @@ import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualit
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 import { HistoryWarningBanner } from "../components/HistoryWarningBanner";
 import { DataOutageBanner } from "../components/DataOutageBanner";
+import { HeroBanner } from "../components/HeroBanner";
 
 export function Overview() {
   const { queryParams, compare, from, to } = usePeriod();
@@ -58,6 +59,7 @@ export function Overview() {
 
   return (
     <div>
+      <HeroBanner image="/coeurs.png" />
       <div className="period-banner">
         <p className="chart-note" style={{ margin: 0 }}>
           Période affichée : {periodLabel} — {deltaLabel}

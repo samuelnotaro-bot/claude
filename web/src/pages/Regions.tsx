@@ -8,6 +8,7 @@ import { FindingsList } from "../components/FindingsList";
 import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA, dataQualityNote, anomalyInclusionNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 import { DataOutageBanner } from "../components/DataOutageBanner";
+import { HeroBanner } from "../components/HeroBanner";
 
 export function Regions() {
   const { queryParams, compare } = usePeriod();
@@ -32,6 +33,7 @@ export function Regions() {
 
   return (
     <div>
+      <HeroBanner image="/lundicatastrophe.png" caption="Performance par région" />
       <div className="card">
         <h2>Sessions par région business</h2>
         <RegionBarChart data={regions} />

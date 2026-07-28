@@ -120,8 +120,14 @@ body {
   overflow: hidden;
   background-color: var(--brand-c1-700);
   /* Dégradé bleu uniquement (palette c1) -- pas de jaune, et pas de c1-900/800
-     (trop violacés) à gauche : on reste sur des tons bleus francs. */
-  background-image: linear-gradient(115deg, var(--brand-c1-700) 0%, var(--brand-c1-600) 40%, var(--brand-c1-400) 130%);
+     (trop violacés) à gauche : on reste sur des tons bleus francs. La photo
+     n'est qu'une texture en fond, très fondue (le dégradé reste dominant à
+     ~85%) pour ne jamais nuire à la lisibilité du texte au-dessus. */
+  background-image:
+    linear-gradient(115deg, color-mix(in srgb, var(--brand-c1-700) 88%, transparent) 0%, color-mix(in srgb, var(--brand-c1-600) 85%, transparent) 40%, color-mix(in srgb, var(--brand-c1-400) 82%, transparent) 130%),
+    url("/header-banner-mkweb.png");
+  background-size: auto, cover;
+  background-position: 0 0, center 35%;
   border-bottom: 3px solid var(--brand-c1-400);
 }
 
@@ -156,10 +162,12 @@ body {
   padding: 18px 20px;
 }
 
-/* Deux colonnes fixes : marque à gauche, sélecteurs à droite -- jamais de wrap qui ferait retomber les sélecteurs à gauche. */
+/* Deux colonnes fixes : marque à gauche, sélecteurs à droite (alignés en bas
+   de colonne, contre la ligne de baseline) -- jamais de wrap qui ferait
+   retomber les sélecteurs à gauche. */
 .app-header {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   flex-wrap: nowrap;
   gap: 20px;
@@ -251,27 +259,27 @@ body {
 }
 
 .mode-badge {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--brand-yellow);
   border: 1.5px solid var(--brand-yellow);
   border-radius: 999px;
-  padding: 4px 9px;
+  padding: 3px 8px;
   white-space: nowrap;
 }
 
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: nowrap;
 }
 
 .period-select {
   font-family: inherit;
-  font-size: 10.5px;
+  font-size: 9.5px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -279,7 +287,7 @@ body {
   background: #ffffff;
   border: 2px solid transparent;
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 5px 10px;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
@@ -311,21 +319,21 @@ body {
 .custom-range {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   background: #ffffff;
   border-radius: 999px;
-  padding: 3px 5px 3px 12px;
+  padding: 2px 4px 2px 10px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .date-input {
   font-family: inherit;
-  font-size: 10.5px;
+  font-size: 9.5px;
   font-weight: 700;
   color: var(--brand-navy);
   background: transparent;
   border: none;
-  padding: 3px 2px;
+  padding: 2px 1px;
   color-scheme: light;
 }
 
@@ -368,6 +376,50 @@ body {
 }
 
 .card + .card { margin-top: 16px; }
+
+.hero-banner {
+  position: relative;
+  height: 92px;
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  background-size: cover;
+  background-repeat: no-repeat;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* Dégradé bleu marque, assez opaque pour garder le texte lisible -- la photo reste une texture de fond, pas le sujet. */
+.hero-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--brand-c1-800) 82%, transparent) 0%,
+    color-mix(in srgb, var(--brand-c1-600) 68%, transparent) 55%,
+    color-mix(in srgb, var(--brand-c1-400) 55%, transparent) 100%
+  );
+}
+
+.hero-banner-caption {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+@media (max-width: 640px) {
+  .hero-banner { height: 72px; }
+  .hero-banner-caption { font-size: 11px; padding: 0 16px; }
+}
 
 .card h2 {
   font-size: 16px;

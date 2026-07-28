@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type BotSignal } from "../lib/api";
 import { KpiTile } from "../components/KpiTile";
+import { HeroBanner } from "../components/HeroBanner";
 import { formatCompactNumber, formatDate } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
@@ -18,6 +19,7 @@ export function Bots() {
 
   return (
     <div>
+      <HeroBanner image="/reunioncrise.png" caption="Analyse du trafic suspect" />
       <div className="card">
         <h2>Détection de trafic bot</h2>
         <p className="card-subtitle" style={{ margin: "-6px 0 0" }}>

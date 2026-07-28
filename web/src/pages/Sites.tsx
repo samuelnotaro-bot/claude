@@ -6,6 +6,7 @@ import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
 import { CellValue } from "../components/CellValue";
 import { DataOutageBanner } from "../components/DataOutageBanner";
+import { HeroBanner } from "../components/HeroBanner";
 import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote, anomalyInclusionNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
@@ -70,6 +71,7 @@ export function Sites() {
 
   return (
     <div>
+      <HeroBanner image="/classe-innovante.png" caption="Détail par site" />
       <div className="card">
         <h2>Sites</h2>
         <p className="chart-note">

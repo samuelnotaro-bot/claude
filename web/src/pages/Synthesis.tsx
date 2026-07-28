@@ -5,6 +5,7 @@ import { FindingsList } from "../components/FindingsList";
 import { GeoMismatchPanel } from "../components/GeoMismatchPanel";
 import { HistoryWarningBanner } from "../components/HistoryWarningBanner";
 import { DataOutageBanner } from "../components/DataOutageBanner";
+import { HeroBanner } from "../components/HeroBanner";
 import { formatCompactNumber, formatDate } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
@@ -49,6 +50,7 @@ export function Synthesis() {
 
   return (
     <div>
+      <HeroBanner image="/lesclientssavent.png" />
       <div className="card">
         <h2 style={{ marginBottom: 4 }}>Synthèse — {periodLabel}</h2>
         <p className="card-subtitle" style={{ margin: 0 }}>
