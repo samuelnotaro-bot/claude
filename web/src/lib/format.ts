@@ -23,23 +23,22 @@ export function formatPct(n: number | null, digits = 1): string {
 }
 
 /**
- * Combined disclosure of everything that makes the totals on a view *not* a
- * raw pass-through of Piwik Pro's own numbers: statistically-flagged
- * traffic-flood days excluded on purpose (see anomaly.ts), and days with no
- * synced data at all (the totals below likely undercount the real Piwik Pro
- * figures by however many days are missing). Missing days are split into
- * those Piwik Pro can still provide (a sync gap, fixable by "Combler les
- * trous de données") and those older than the account's data retention
- * window (missingDaysOutOfRetention -- Piwik Pro no longer has this data at
- * all, so it will never be filled, no matter how many times a gap-fill
- * retries it). Returns null when nothing applies, i.e. the totals are a
- * complete, unmodified sum.
+ * Disclosure of what makes the totals on a view *not* a complete pass-through
+ * of Piwik Pro's own numbers: days with no synced data at all (the totals
+ * likely undercount the real Piwik Pro figures by however many days are
+ * missing). Missing days are split into those Piwik Pro can still provide (a
+ * sync gap, fixable by "Combler les trous de données") and those older than
+ * the account's data retention window (missingDaysOutOfRetention -- Piwik Pro
+ * no longer has this data at all, so it will never be filled, no matter how
+ * many times a gap-fill retries it). Returns null when nothing applies, i.e.
+ * the totals are a complete sum.
+ *
+ * Traffic-spike days are NOT part of this: they're included in the totals
+ * (see anomaly.ts), just flagged for the charts/Bots tab -- see
+ * anomalyInclusionNote below for that separate, non-warning note.
  */
-export function dataQualityNote(excludedAnomalyDays: number, missingDays: number, missingDaysOutOfRetention = 0): string | null {
+export function dataQualityNote(missingDays: number, missingDaysOutOfRetention = 0): string | null {
   const parts: string[] = [];
-  if (excludedAnomalyDays > 0) {
-    parts.push(`${excludedAnomalyDays} jour${excludedAnomalyDays > 1 ? "s" : ""} de pic trafic anormal exclu${excludedAnomalyDays > 1 ? "s" : ""} des totaux`);
-  }
   const fixableMissing = missingDays - missingDaysOutOfRetention;
   if (fixableMissing > 0) {
     parts.push(`${fixableMissing} jour${fixableMissing > 1 ? "s" : ""} de données manquant${fixableMissing > 1 ? "s" : ""} (non encore synchronisé${fixableMissing > 1 ? "s" : ""} -- totaux sous-estimés d'autant)`);
@@ -50,6 +49,16 @@ export function dataQualityNote(excludedAnomalyDays: number, missingDays: number
     );
   }
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * Neutral (non-warning) note that N day(s) in the totals were an unusually
+ * high traffic spike (>35% above average, see anomaly.ts) -- informational
+ * only, since those days are included in the totals, not excluded.
+ */
+export function anomalyInclusionNote(flaggedAnomalyDays: number): string | null {
+  if (flaggedAnomalyDays <= 0) return null;
+  return `${flaggedAnomalyDays} jour${flaggedAnomalyDays > 1 ? "s" : ""} de pic de trafic inhabituel inclus dans ces chiffres (voir l'onglet Bots)`;
 }
 
 export function formatDate(iso: string): string {

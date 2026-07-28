@@ -4,9 +4,10 @@ import { KpiTile } from "../components/KpiTile";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote, anomalyInclusionNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 import { HistoryWarningBanner } from "../components/HistoryWarningBanner";
+import { DataOutageBanner } from "../components/DataOutageBanner";
 
 export function Overview() {
   const { queryParams, compare, from, to } = usePeriod();
@@ -52,7 +53,8 @@ export function Overview() {
 
   const deltaLabel = periodComparisonLabel(compare);
   const periodLabel = from === to ? from : `${from} → ${to}`;
-  const qualityNote = dataQualityNote(overview.excludedAnomalyDays, overview.missingDays, overview.missingDaysOutOfRetention);
+  const qualityNote = dataQualityNote(overview.missingDays, overview.missingDaysOutOfRetention);
+  const anomalyNote = anomalyInclusionNote(overview.flaggedAnomalyDays);
 
   return (
     <div>
@@ -76,7 +78,10 @@ export function Overview() {
         retentionFloorDate={overview.retentionFloorDate}
       />
 
+      <DataOutageBanner outages={overview.dataOutages} />
+
       {qualityNote && <p className="data-quality-banner">⚠ {qualityNote}, sur tous les chiffres ci-dessous.</p>}
+      {anomalyNote && <p className="chart-note">ℹ {anomalyNote}.</p>}
 
       <h3 className="section-title">Trafic & conversion</h3>
       <div className="kpi-grid">
@@ -131,7 +136,8 @@ export function Overview() {
         <div>
           <div className="card">
             <h2>Trafic global — {overview.series.length} jours</h2>
-            <TrendChart data={overview.series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} />
+            <p className="chart-note">Point rouge = pic de trafic (&gt;35% au-dessus de la moyenne de la période) détecté sur l'ensemble des sites -- inclus dans les chiffres, détail dans l'onglet Bots.</p>
+            <TrendChart data={overview.series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} markAnomalies />
           </div>
           <div className="card">
             <h2>Répartition des canaux d'acquisition (tous sites)</h2>

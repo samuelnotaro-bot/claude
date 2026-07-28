@@ -6,10 +6,6 @@ export interface PeriodQuery {
   compare: CompareMode;
 }
 
-// Must be >= anomaly.ts's BASELINE_WINDOW so there's enough trailing history to
-// tell a real anomaly from noise for every day in a requested window.
-export const ANOMALY_BASELINE_PADDING_DAYS = 28;
-
 // Guards against a mistyped/malicious range asking for an absurd amount of history.
 const MAX_RANGE_DAYS = 5 * 365;
 

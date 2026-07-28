@@ -5,7 +5,8 @@ import { ChannelMixChart } from "../components/ChannelMixChart";
 import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
 import { CellValue } from "../components/CellValue";
-import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote } from "../lib/format";
+import { DataOutageBanner } from "../components/DataOutageBanner";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote, anomalyInclusionNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 type SortKey =
@@ -22,7 +23,7 @@ type SortKey =
   | "conversionRate";
 
 const ANOMALY_HEADER_TITLE =
-  "Jours où un pic de trafic anormal (signature de bot -- voir l'onglet Bots) a été détecté sur ce site et exclu des totaux de cette ligne.";
+  "Jours où un pic de trafic (>35% au-dessus de la moyenne -- voir l'onglet Bots) a été détecté sur ce site. Inclus dans les totaux de cette ligne, pas exclu.";
 const MISSING_HEADER_TITLE =
   "Jours sans synchronisation Piwik Pro pour ce site sur la période sélectionnée -- les totaux de cette ligne sous-estiment les vrais chiffres Piwik Pro d'autant.";
 
@@ -95,7 +96,7 @@ export function Sites() {
                 <th onClick={() => toggleSort("support")}>Support</th>
                 <th onClick={() => toggleSort("downloads")}>Téléchargements</th>
                 <th onClick={() => toggleSort("conversionRate")}>Taux de conversion</th>
-                <th title={ANOMALY_HEADER_TITLE}>Pics exclus</th>
+                <th title={ANOMALY_HEADER_TITLE}>Pics détectés</th>
                 <th title={MISSING_HEADER_TITLE}>Données manquantes</th>
               </tr>
             </thead>
@@ -131,7 +132,7 @@ export function Sites() {
                   <td>
                     <CellValue value={`${(s.conversionRate * 100).toFixed(2)}%`} deltaPct={s.conversionRateChangePct} />
                   </td>
-                  <td title={ANOMALY_HEADER_TITLE}>{s.excludedAnomalyDays > 0 ? s.excludedAnomalyDays : "—"}</td>
+                  <td title={ANOMALY_HEADER_TITLE}>{s.flaggedAnomalyDays > 0 ? s.flaggedAnomalyDays : "—"}</td>
                   <td title={MISSING_HEADER_TITLE}>{s.missingDays > 0 ? s.missingDays : "—"}</td>
                 </tr>
               ))}
@@ -143,9 +144,14 @@ export function Sites() {
       {selected && (
         <>
           <h3 className="section-title">Détail & tendances — {selected.name}</h3>
+          <DataOutageBanner outages={selected.dataOutages} />
           {(() => {
-            const note = dataQualityNote(selected.excludedAnomalyDays, selected.missingDays, selected.missingDaysOutOfRetention);
+            const note = dataQualityNote(selected.missingDays, selected.missingDaysOutOfRetention);
             return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selected.name} ci-dessus.</p> : null;
+          })()}
+          {(() => {
+            const note = anomalyInclusionNote(selected.flaggedAnomalyDays);
+            return note ? <p className="chart-note">ℹ {note}.</p> : null;
           })()}
           <div className="kpi-grid">
             <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selected.organicSessions)} deltaPct={selected.organicSessionsChangePct} deltaLabel={deltaLabel} />
@@ -172,7 +178,7 @@ export function Sites() {
 
           <div className="card">
             <h2>Trafic — {selected.name}</h2>
-            <p className="chart-note">Point rouge = pic de trafic anormal détecté (exclu des KPIs ci-dessus, visible ici pour analyse).</p>
+            <p className="chart-note">Point rouge = pic de trafic (&gt;35% au-dessus de la moyenne de la période) -- inclus dans les KPIs ci-dessus, pas exclu.</p>
             <TrendChart data={series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} markAnomalies />
           </div>
           <div className="card">

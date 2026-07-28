@@ -22,7 +22,8 @@ export function Bots() {
         <h2>Détection de trafic bot</h2>
         <p className="card-subtitle" style={{ margin: "-6px 0 0" }}>
           Grosses variations de trafic organique et direct sur {from} → {to}, et estimation du trafic bot par rapport au trafic
-          total mesuré. Voir README pour la méthode de détection (statistique, pas de blocklist).
+          total mesuré. Un "pic" = un jour à plus de 35% au-dessus de la moyenne de la période -- une seule règle simple, pas de
+          blocklist, voir README pour le détail.
         </p>
       </div>
 
@@ -50,11 +51,10 @@ export function Bots() {
           </div>
 
           <div className="card">
-            <h2>Pics de trafic ({signal.trafficSpikes.length})</h2>
+            <h2>Pics de trafic — vue globale ({signal.trafficSpikes.length})</h2>
             <p className="chart-note">
-              Jours où le trafic (tous sites) dépasse notablement la moyenne de la période sélectionnée, avec la répartition
-              organique/direct et les sites concernés -- une liste plus souple que les variations statistiques ci-dessous, qui
-              reste utile même sur un historique court.
+              Jours où le trafic de l'ensemble des sites dépasse de plus de 35% la moyenne de la période sélectionnée, avec la
+              répartition organique/direct et les sites individuellement concernés ce jour-là.
             </p>
             {signal.trafficSpikes.length === 0 ? (
               <p className="empty-state">Pas assez de jours dans la période sélectionnée pour calculer une moyenne, ou aucun pic notable.</p>
@@ -81,13 +81,13 @@ export function Bots() {
           </div>
 
           <div className="card">
-            <h2>Variations statistiques confirmées ({signal.anomalies.length})</h2>
+            <h2>Pics de trafic — par site ({signal.anomalies.length})</h2>
             <p className="chart-note">
-              Sous-ensemble plus strict des pics ci-dessus : nécessite un historique suffisant (8 semaines) et une signature de
-              concentration par canal caractéristique des vagues de bots déjà observées sur cette organisation.
+              Même règle (&gt;35% au-dessus de la moyenne de la période) appliquée site par site plutôt qu'à l'ensemble --
+              détecte un pic localisé à un seul site même quand le total global reste normal.
             </p>
             {signal.anomalies.length === 0 ? (
-              <p className="empty-state">Aucune variation statistiquement anormale confirmée sur cette période (historique probablement encore trop court -- voir les pics ci-dessus).</p>
+              <p className="empty-state">Aucun pic détecté site par site sur cette période.</p>
             ) : (
               <div className="table-scroll">
                 <table className="data-table">

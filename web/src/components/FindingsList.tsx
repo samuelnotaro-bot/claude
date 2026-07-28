@@ -16,9 +16,10 @@ export function FindingsList({ findings, emptyLabel = "Aucune tendance notable d
     <ul className="bullet-list">
       {findings.map((f, i) => (
         <li key={i}>
-          <span className="dot" style={{ background: f.direction === "up" ? "var(--good)" : "var(--critical)" }} />
+          <span className="dot" style={{ background: f.suspect ? "var(--warning)" : f.direction === "up" ? "var(--good)" : "var(--critical)" }} />
           <span>
             <div>
+              {f.suspect && <span title="Variation extrême, probablement un artefact de données -- voir l'explication ci-dessous.">⚠ </span>}
               <strong>{f.entityName}</strong> — {f.label} {f.direction === "up" ? "↑" : "↓"} {formatPct(f.changePct)}
               {f.detail && <span className="finding-detail"> ({CHANNEL_LABELS[f.detail] ?? f.detail})</span>}
             </div>

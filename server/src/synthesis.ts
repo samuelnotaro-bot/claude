@@ -34,6 +34,13 @@ function scopeLabel(f: Finding): string {
 function bulletForFinding(f: Finding, siblingSessionsFinding?: Finding): string {
   const who = scopeLabel(f);
 
+  // A change this extreme is a data-quality artifact until proven otherwise
+  // (see routes/api.ts#buildPeriodFindings) -- never phrase it as a confident
+  // "bon signal" or "à corriger d'urgence" business trend.
+  if (f.suspect) {
+    return `⚠ Donnée suspecte sur ${who} — ${f.label} : ${f.explanation ?? "variation extrême à vérifier avant d'agir, probablement causée par une période de comparaison incomplète."}`;
+  }
+
   if (f.metric === "sessions") {
     if (f.direction === "down") {
       return `Trafic en baisse sur ${who} : ${pct(f.changePct ?? 0)} sur la période (${Math.round(f.current)} sessions) → auditer en priorité le SEO (indexation, positions), les changements techniques récents et la disponibilité du site.`;

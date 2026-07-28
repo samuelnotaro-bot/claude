@@ -492,6 +492,18 @@ button.secondary-btn:disabled {
   color: var(--text-primary);
 }
 
+/* More severe than .data-quality-banner: a site likely has a broken tracking tag right now, not just a few undercounted days. */
+.data-outage-banner {
+  background: color-mix(in srgb, var(--critical) 14%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--critical) 45%, transparent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.data-outage-banner .bullet-list { margin-top: 8px; margin-bottom: 0; }
+
 .period-banner {
   display: flex;
   align-items: center;

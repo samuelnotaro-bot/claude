@@ -38,9 +38,21 @@ export interface DayPoint {
   directBounces: number | null;
   searchConsoleClicks: number | null;
   searchConsoleImpressions: number | null;
-  /** Flagged as a traffic-flood anomaly (see server anomaly.ts). Only set on /api/series (raw/detail view). */
+  /** Flagged as a traffic spike (>35% above the period average, see server anomaly.ts). Included in totals, not excluded -- purely a highlight. */
   isAnomaly?: boolean;
   isMissing?: boolean;
+}
+
+/** A run of 4+ consecutive days with no real data for a site (no snapshot, or a snapshot reporting exactly 0 sessions) -- see server trends.ts#detectDataOutages. */
+export interface DataOutage {
+  siteId: string;
+  siteName: string;
+  region: string;
+  dateFrom: string;
+  dateTo: string;
+  days: number;
+  /** Whether the outage falls in the currently-viewed period or its comparison period. */
+  context?: "current" | "compare";
 }
 
 export type PeriodDays = 7 | 30 | 90 | 365;
@@ -71,6 +83,8 @@ export interface Finding {
   detail?: string;
   /** "Why" -- which sites drove this change, when computable (region/global scope only). */
   explanation?: string;
+  /** True when |changePct| > 100% -- almost always a data-quality artifact (thin/gappy comparison baseline), never presented as a confident trend. See FindingsList. */
+  suspect?: boolean;
 }
 
 /** KPI fields shared by /api/overview, /api/regions and /api/sites/summary (see server/src/routes/api.ts withChanges()). Nullable fields mean "non disponible" (a Piwik query failed or the integration isn't configured), distinct from a confirmed 0. */
@@ -115,12 +129,14 @@ export interface Overview extends KpiSet {
   retentionFloorDate: string;
   siteCount: number;
   series: DayPoint[];
-  /** Days excluded from the KPIs above because they were flagged as a traffic-flood anomaly. */
-  excludedAnomalyDays: number;
+  /** Days included in the totals above that were flagged as a traffic spike (>35% above average) -- informational, NOT excluded. See charts/Bots tab for detail. */
+  flaggedAnomalyDays: number;
   /** Days with no synced snapshot at all in this period -- totals below likely undercount real Piwik Pro numbers by this much. Includes both fixable sync gaps and permanently out-of-retention days, see missingDaysOutOfRetention. */
   missingDays: number;
   /** Of missingDays, how many are older than Piwik Pro's data retention window -- these will NEVER be filled (not a sync gap), see dataQualityNote. */
   missingDaysOutOfRetention: number;
+  /** Sites with 4+ consecutive days of no real data in this period -- a likely tracking/tag outage, not just a quiet period. */
+  dataOutages: DataOutage[];
   findings: Finding[];
   /** Synthesis bullets generated on the fly for this exact period (distinct from the cron-generated weekly synthesis_history log, see the Synthèses tab). */
   synthesisBullets: string[];
@@ -130,18 +146,20 @@ export interface SiteSummary extends KpiSet {
   id: string;
   name: string;
   region: string;
-  excludedAnomalyDays: number;
+  flaggedAnomalyDays: number;
   missingDays: number;
   missingDaysOutOfRetention: number;
+  dataOutages: DataOutage[];
   findings: Finding[];
 }
 
 export interface RegionSummary extends KpiSet {
   region: string;
   siteCount: number;
-  excludedAnomalyDays: number;
+  flaggedAnomalyDays: number;
   missingDays: number;
   missingDaysOutOfRetention: number;
+  dataOutages: DataOutage[];
   findings: Finding[];
 }
 
@@ -166,6 +184,8 @@ export interface PeriodSynthesis {
   earliestDataDate: string | null;
   /** Findings across every site, every region AND global for this period, ranked by impact -- unlike Overview's findings (global scope only). */
   findings: Finding[];
+  /** Sites with 4+ consecutive days of no real data in the current period. */
+  dataOutages: DataOutage[];
   bullets: string[];
 }
 

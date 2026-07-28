@@ -5,8 +5,9 @@ import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA, dataQualityNote } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA, dataQualityNote, anomalyInclusionNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
+import { DataOutageBanner } from "../components/DataOutageBanner";
 
 export function Regions() {
   const { queryParams, compare } = usePeriod();
@@ -48,8 +49,8 @@ export function Regions() {
                 <th>Δ {deltaLabel}</th>
                 <th>Conversions</th>
                 <th>Taux de conversion</th>
-                <th title="Jours où un pic de trafic anormal (signature de bot -- voir l'onglet Bots) a été détecté sur un des sites de cette région et exclu des totaux de cette ligne.">
-                  Pics exclus
+                <th title="Jours où un pic de trafic (>35% au-dessus de la moyenne -- voir l'onglet Bots) a été détecté sur un des sites de cette région. Inclus dans les totaux de cette ligne, pas exclu.">
+                  Pics détectés
                 </th>
                 <th title="Jours sans synchronisation Piwik Pro pour un des sites de cette région sur la période -- les totaux de cette ligne sous-estiment les vrais chiffres Piwik Pro d'autant.">
                   Données manquantes
@@ -67,7 +68,7 @@ export function Regions() {
                   </td>
                   <td>{formatCompactNumber(r.conversions)}</td>
                   <td>{(r.conversionRate * 100).toFixed(2)}%</td>
-                  <td>{r.excludedAnomalyDays > 0 ? r.excludedAnomalyDays : "—"}</td>
+                  <td>{r.flaggedAnomalyDays > 0 ? r.flaggedAnomalyDays : "—"}</td>
                   <td>{r.missingDays > 0 ? r.missingDays : "—"}</td>
                 </tr>
               ))}
@@ -79,9 +80,14 @@ export function Regions() {
       {selectedRegion && (
         <>
           <h3 className="section-title">SEO/GEO, signal bot & conversion — {selectedRegion.region}</h3>
+          <DataOutageBanner outages={selectedRegion.dataOutages} />
           {(() => {
-            const note = dataQualityNote(selectedRegion.excludedAnomalyDays, selectedRegion.missingDays, selectedRegion.missingDaysOutOfRetention);
+            const note = dataQualityNote(selectedRegion.missingDays, selectedRegion.missingDaysOutOfRetention);
             return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selectedRegion.region} ci-dessous.</p> : null;
+          })()}
+          {(() => {
+            const note = anomalyInclusionNote(selectedRegion.flaggedAnomalyDays);
+            return note ? <p className="chart-note">ℹ {note}.</p> : null;
           })()}
           <div className="kpi-grid">
             <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selectedRegion.organicSessions)} deltaPct={selectedRegion.organicSessionsChangePct} deltaLabel={deltaLabel} />
@@ -108,7 +114,7 @@ export function Regions() {
 
           <div className="card">
             <h2>Trafic — {selected}</h2>
-            <p className="chart-note">Point rouge = pic de trafic anormal détecté sur un des sites de cette région (exclu des KPIs ci-dessus).</p>
+            <p className="chart-note">Point rouge = pic de trafic (&gt;35% au-dessus de la moyenne de la période) détecté sur la région dans son ensemble -- inclus dans les KPIs ci-dessus, pas exclu.</p>
             <TrendChart data={series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} markAnomalies />
           </div>
           <div className="card">

@@ -190,40 +190,94 @@ hebdomadaire et l'analyse ad hoc.
 
 ## Détection des pics de trafic anormal, onglet Bots
 
-`server/src/anomaly.ts` flague un jour comme anormal quand le volume de sessions
-est statistiquement très au-dessus de la référence récente **et** que la part de
-trafic organique **ou directe** est anormalement concentrée — signature observée
-sur cette organisation Piwik Pro pour des vagues de bots/crawlers que le filtre
-Piwik Pro natif ne détecte jamais (`visitor_type` reste à "Human" à 100%).
+`server/src/anomaly.ts` flague un jour comme "pic" par une règle unique et
+simple, appliquée identiquement partout (points rouges sur les graphiques,
+tableau Bots, compteurs KPI) : **sessions > 135% de la moyenne** des jours
+comparés (soit plus de 35% au-dessus de la moyenne). Pas de z-score, pas de
+signature de concentration par canal, pas d'exigence d'historique long --
+volontairement le plus simple possible.
 
-Ces jours sont exclus du calcul des KPIs affichés (`/api/overview`,
-`/api/regions`, `/api/sites/summary`) mais restent visibles (point rouge) dans
-les graphiques de détail par site/région, avec le nombre de jours exclus affiché
-en petit sous les KPIs concernés.
+Un pic **n'est plus exclu des KPIs affichés** (`/api/overview`, `/api/regions`,
+`/api/sites/summary`) : ces totaux doivent correspondre exactement à ceux de
+Piwik Pro, donc rien n'en est retiré. Le jour reste inclus dans les sommes, et
+seulement mis en évidence (point rouge sur les graphiques, compteur "Pics
+détectés" dans les tableaux Sites/Régions, note informative sous les KPIs
+concernés) pour que l'analyse business en tienne compte sans fausser les
+chiffres.
 
-L'onglet **Bots** dédié liste chaque variation détectée (site, date, canal
-organique/direct, sessions vs. référence) et calcule une **estimation du
-trafic bot** = somme des sessions en excès sur les jours flagués ÷ trafic total
-mesuré sur la période. Un signal secondaire, plus doux, complète cette
-estimation : la part de sessions "rebond" (1 page vue) sur les canaux
-organique/direct, à lire comme une tendance plutôt qu'une quantification dure.
+Pour un agrégat région/global, la règle tourne sur le **total de la région/du
+global elle-même**, pas sur une union des pics de chaque site : avec 15-20
+sites, marquer l'agrégat "pic" dès qu'un seul site l'est ferait presque
+toujours un faux positif (la probabilité qu'au moins un site sur 15-20 ait une
+petite variation un jour donné approche 100%, même quand la région dans son
+ensemble est parfaitement normale).
 
-Cette détection statistique stricte nécessite 14 à 56 jours d'historique et une
-signature précise (concentration par canal) : sur un historique court, ou pour
-un pic qui ne colle pas exactement à cette signature, elle ne renvoie rien.
-L'onglet affiche donc en complément une liste **"Pics de trafic"** plus souple
-(`server/src/bots.ts#computeTrafficSpikes`) : les jours où le trafic (tous
-sites) dépasse notablement la moyenne de la période sélectionnée, avec la
-répartition organique/direct et les sites dont la propre moyenne est elle
-aussi dépassée ce jour-là ("sites concernés") — utile dès quelques jours de
-données, sans attendre 8 semaines d'historique.
+L'onglet **Bots** dédié applique cette même règle à deux échelles complémentaires :
+- **vue globale** (`computeTrafficSpikes`) : jours où le trafic de l'ensemble
+  des sites dépasse la moyenne globale de plus de 35%, avec la répartition
+  organique/direct et les sites individuellement concernés ce jour-là ;
+- **vue par site** (`flagAnomalies` appliqué site par site) : détecte un pic
+  localisé à un seul site même quand le total global reste dans la norme.
 
-**Limite connue** : la détection statistique stricte ne capte que les pics
-statistiquement extrêmes — un bruit de fond de trafic non-humain à un niveau
-plus faible, sous le seuil de détection, reste inclus dans les KPIs et dans
-l'estimation du trafic bot (qui est donc un plancher, pas une mesure
-exhaustive). La solution durable est de vérifier le filtre anti-bot dans
-Piwik Pro (Administration > Confidentialité).
+Une **estimation du trafic bot** = somme des sessions en excès sur les jours
+flagués ÷ trafic total mesuré sur la période, complétée par un signal
+secondaire plus doux : la part de sessions "rebond" (1 page vue) sur les
+canaux organique/direct.
+
+**Limite connue** : la règle ne capte que les pics dépassant le seuil de 35% --
+un bruit de fond de trafic non-humain à un niveau plus faible reste inclus
+dans les KPIs et dans l'estimation du trafic bot (qui est donc un plancher,
+pas une mesure exhaustive). La solution durable est de vérifier le filtre
+anti-bot dans Piwik Pro (Administration > Confidentialité).
+
+## Alerte de panne de données (0 stat sur plusieurs jours)
+
+`server/src/trends.ts#detectDataOutages` détecte, pour chaque site, les séries
+de **4 jours consécutifs ou plus** sans aucune donnée réelle -- que ce soit un
+jour sans snapshot du tout (trou de synchronisation) ou un snapshot présent
+mais à 0 session (tag de suivi cassé, intégration Piwik Pro interrompue) : les
+deux ont la même conséquence pour qui lit le dashboard ("il ne s'est rien
+passé ici"), et surtout la même conséquence dangereuse pour les comparaisons
+de période : un total de comparaison anormalement bas ou nul explose la
+variation en % calculée, même si le trafic réel n'a pas bougé.
+
+Ces pannes sont signalées à deux endroits :
+- un **bandeau visible** (`DataOutageBanner`, rouge, plus sévère que le
+  bandeau jaune "données manquantes") sur la Vue d'ensemble, l'onglet Sites
+  (site sélectionné), l'onglet Régions (région sélectionnée) et l'onglet
+  Synthèses, indiquant le site, la région et la période exacte de la panne --
+  aussi bien sur la période affichée que sur sa période de comparaison ;
+- une **exclusion des tendances "bon signal"** : voir la section suivante.
+
+Les pannes antérieures à la première donnée jamais synchronisée
+(`earliestDataDate`) sont ignorées -- ce n'est pas une panne, juste l'absence
+d'historique à cette date (déjà expliquée par le bandeau de comparaison
+indisponible, voir "Transparence sur les données affichées").
+
+## Variations extrêmes suspectes (>100%)
+
+Une comparaison contre une période avec très peu de données réelles (panne
+partielle, quelques jours seulement) produit un pourcentage de variation
+techniquement calculable mais absurde -- un site à 50 sessions un jour puis
+30000 sur la période affichée donnerait "+60000%" présenté comme un "bon
+signal", alors que la vraie cause est presque toujours la période de
+comparaison elle-même, pas un vrai changement métier.
+
+`buildPeriodFindings` (`server/src/routes/api.ts`) traite toute variation
+dépassant 100% comme suspecte (`Finding.suspect`) plutôt que comme une
+tendance business confiante :
+- le texte généré change de ton ("⚠ Donnée suspecte... à vérifier avant
+  d'agir") et, quand une panne de données correspondante a été détectée sur
+  la période de comparaison, la nomme explicitement (site, plage de dates) ;
+- son poids dans le classement des tendances (`impactScore`) est réduit à
+  quasi zéro, pour qu'une variation suspecte ne prenne jamais la place d'une
+  vraie tendance dans le "Résumé" (top 6) de la synthèse -- elle reste
+  visible dans la liste complète "Toutes les tendances notables", pas
+  masquée, juste correctement priorisée.
+
+Les chiffres bruts (tableaux, tuiles KPI) ne sont **jamais** modifiés ou
+cachés par ce mécanisme -- seule la couche d'analyse/synthèse générée
+applique ce garde-fou, pour ne jamais s'écarter des vrais chiffres Piwik Pro.
 
 ## Détection des écarts de géolocalisation (onglet Localisation)
 
@@ -283,14 +337,10 @@ isolé manque.
 
 ## Transparence sur les données affichées
 
-Trois choses font que les totaux affichés ne sont *pas* une simple somme brute
-des chiffres Piwik Pro, et sont maintenant signalées directement sur les
-métriques concernées plutôt que documentées seulement ici :
+Ce qui fait que les totaux affichés ne sont *pas* toujours une simple somme
+brute des chiffres Piwik Pro est maintenant signalé directement sur les
+métriques concernées plutôt que documenté seulement ici :
 
-- **Jours de pic trafic exclus** (voir "Détection des pics de trafic anormal"
-  plus bas) : volontaire, pour ne pas laisser une vague de bots gonfler les
-  chiffres business. Indiqué par un bandeau d'avertissement en haut de chaque
-  vue quand ça s'applique.
 - **Jours de données manquantes** (`missingDays`) : les totaux
   **sous-estiment** les vrais chiffres Piwik Pro d'autant. Deux causes bien
   distinctes, affichées séparément dans le même bandeau plutôt que

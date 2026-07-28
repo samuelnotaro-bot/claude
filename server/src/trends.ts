@@ -1,5 +1,6 @@
 import type { SnapshotRow } from "./repo.js";
 import type { Channel } from "./piwik/types.js";
+import { flagAnomalies } from "./anomaly.js";
 
 export interface DayPoint {
   date: string;
@@ -69,6 +70,14 @@ export interface Finding {
   detail?: string; // extra context, e.g. which channel shifted
   /** "Why" -- which child entities (sites within a region/global finding) drove this change, when computable. See routes/api.ts#explainFinding. */
   explanation?: string;
+  /**
+   * True when |changePct| exceeds SUSPECT_CHANGE_PCT_THRESHOLD (100%) -- a
+   * swing that extreme is almost always a data-quality artifact (a thin or
+   * gappy comparison baseline), not a real trend, so it must never be
+   * presented as a confident "bon signal" finding. See
+   * routes/api.ts#applySuspectGuard and synthesis.ts#bulletForFinding.
+   */
+  suspect?: boolean;
 }
 
 export const METRIC_LABELS: Record<FindingMetric, string> = {
@@ -158,13 +167,19 @@ export function zeroFillDayPoints(points: DayPoint[], from: string, to: string):
 
 /**
  * Merges same-date rows from multiple sites into continent/global daily points.
- * `anomalousDatesBySite`, when given, must be index-aligned with `rowsBySite`; an
- * aggregate point is marked `isAnomaly` if any contributing site was flagged that day.
+ * Does NOT derive `isAnomaly` from the contributing sites' own flags (an
+ * earlier version flagged the aggregate day when *any* site was flagged --
+ * with 15-20 sites in a region, the probability that at least one has a blip
+ * on a given day approaches certainty even when the region's own traffic is
+ * perfectly normal, which is why the region charts were showing a red dot on
+ * almost every point). Callers that need anomaly detection at the
+ * region/global level should run `flagAnomalies` on the resulting aggregate
+ * series itself -- the same test individual sites get, applied to the
+ * region/global's own totals -- see routes/api.ts's /api/series.
  */
-export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBySite?: (Set<string> | undefined)[]): DayPoint[] {
+export function aggregateDayPoints(rowsBySite: SnapshotRow[][]): DayPoint[] {
   const byDate = new Map<string, DayPoint>();
-  rowsBySite.forEach((rows, siteIndex) => {
-    const anomalousDates = anomalousDatesBySite?.[siteIndex];
+  rowsBySite.forEach((rows) => {
     for (const r of rows) {
       const existing = byDate.get(r.date);
       const base: DayPoint = existing ?? {
@@ -201,7 +216,6 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
       for (const ch of Object.keys(base.channels) as Channel[]) {
         base.channels[ch] += r.channels[ch];
       }
-      if (anomalousDates?.has(r.date)) base.isAnomaly = true;
       byDate.set(r.date, base);
     }
   });
@@ -216,6 +230,11 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
  * aggregate series. Distinct from aggregateDayPoints, which merges raw
  * SnapshotRow[][] by date instead: this is the version to use once data has
  * already been converted to DayPoint (see routes/api.ts's loadCleanSeriesBySite).
+ *
+ * `isAnomaly` on the result is recomputed on the aggregate's own totals (see
+ * anomaly.ts) rather than OR-ed up from the contributing sites -- the same
+ * fix as aggregateDayPoints, for the same reason (a region with many sites
+ * would otherwise show a red dot on almost every day).
  */
 export function aggregateDayPointSeries(seriesBySite: DayPoint[][]): DayPoint[] {
   const length = seriesBySite[0]?.length ?? 0;
@@ -240,12 +259,69 @@ export function aggregateDayPointSeries(seriesBySite: DayPoint[][]): DayPoint[] 
       base.searchConsoleClicks = addNullable(base.searchConsoleClicks, p.searchConsoleClicks);
       base.searchConsoleImpressions = addNullable(base.searchConsoleImpressions, p.searchConsoleImpressions);
       for (const ch of Object.keys(base.channels) as Channel[]) base.channels[ch] += p.channels[ch];
-      if (p.isAnomaly) base.isAnomaly = true;
     }
     base.conversionRate = base.sessions > 0 ? base.goalConversions / base.sessions : 0;
     result.push(base);
   }
+  const anomalousDates = flagAnomalies(result);
+  for (const p of result) p.isAnomaly = anomalousDates.has(p.date);
   return result;
+}
+
+export interface DataOutage {
+  siteId: string;
+  siteName: string;
+  region: string;
+  dateFrom: string;
+  dateTo: string;
+  days: number;
+  /** Whether this outage falls in the currently-viewed period or its comparison period -- set by the caller (routes/api.ts), not this function. Both matter: a compare-period outage is exactly what makes a % change meaningless (see buildPeriodFindings). */
+  context?: "current" | "compare";
+}
+
+// "plus de 3 jours" per the reported requirement.
+const MIN_OUTAGE_DAYS = 4;
+
+/**
+ * Finds runs of MIN_OUTAGE_DAYS+ consecutive days with no real data for a
+ * site -- either no snapshot row at all (isMissing, a sync gap) or a
+ * snapshot reporting exactly 0 sessions (tracking broken/removed, or the
+ * integration silently stopped). Both look identical to someone reading the
+ * dashboard ("nothing happened here"), and both make any % comparison that
+ * touches these days meaningless -- see checkSuspectFindings in
+ * routes/api.ts, which uses this to explain (not just flag) an otherwise
+ * inexplicable extreme swing.
+ *
+ * `points` must be date-ordered and gapless (see zeroFillDayPoints).
+ */
+export function detectDataOutages(points: DayPoint[], siteId: string, siteName: string, region: string): DataOutage[] {
+  const outages: DataOutage[] = [];
+  let streakStart: string | null = null;
+  let streakEnd: string | null = null;
+  let streakLen = 0;
+
+  const flush = () => {
+    if (streakStart && streakEnd && streakLen >= MIN_OUTAGE_DAYS) {
+      outages.push({ siteId, siteName, region, dateFrom: streakStart, dateTo: streakEnd, days: streakLen });
+    }
+    streakStart = null;
+    streakEnd = null;
+    streakLen = 0;
+  };
+
+  for (const p of points) {
+    const isOutageDay = p.isMissing === true || p.sessions === 0;
+    if (isOutageDay) {
+      if (!streakStart) streakStart = p.date;
+      streakEnd = p.date;
+      streakLen++;
+    } else {
+      flush();
+    }
+  }
+  flush();
+
+  return outages;
 }
 
 function sum(points: DayPoint[], pick: (p: DayPoint) => number): number {

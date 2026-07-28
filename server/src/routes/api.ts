@@ -14,13 +14,16 @@ import {
   aggregateDayPoints,
   aggregateDayPointSeries,
   zeroFillDayPoints,
+  detectDataOutages,
   METRIC_LABELS,
   type DayPoint,
   type Finding,
   type FindingMetric,
   type Scope,
+  type DataOutage,
 } from "../trends.js";
-import { excludeAnomalies, flagAnomalies } from "../anomaly.js";
+import type { SiteRecord } from "../repo.js";
+import { flagAnomalies } from "../anomaly.js";
 import { checkGeoMismatches } from "../geoMismatch.js";
 import { computeBotSignal } from "../bots.js";
 import { backfillGaps } from "../sync.js";
@@ -35,7 +38,6 @@ import {
   pctChange,
   hasEnoughHistoryFor,
   addDaysIso,
-  ANOMALY_BASELINE_PADDING_DAYS,
   type PeriodQuery,
 } from "../period.js";
 
@@ -60,10 +62,16 @@ function sumNullable(points: DayPoint[], pick: (p: DayPoint) => number | null): 
 }
 
 /**
- * Loads, cleans (traffic-flood anomalies excluded -- see anomaly.ts) and
- * zero-fills (see trends.zeroFillDayPoints) the current period and its
- * comparison period for a set of sites, in a single bulk DB round trip
+ * Loads and zero-fills (see trends.zeroFillDayPoints) the current period and
+ * its comparison period for a set of sites, in a single bulk DB round trip
  * instead of one query per site -- the main fix for slow dashboard loads.
+ *
+ * Traffic-flood days are NOT excluded from the totals here (they used to be
+ * -- the dashboard must match Piwik Pro's own numbers exactly, per the
+ * account owner's explicit requirement; recalculating/excluding anything
+ * without saying so was the opposite of that). They're flagged (`isAnomaly`)
+ * instead, so charts can highlight them and the Bots tab can analyze them,
+ * without silently changing what the KPI totals add up to.
  */
 async function loadCleanSeriesBySite(
   siteIds: string[],
@@ -71,42 +79,75 @@ async function loadCleanSeriesBySite(
 ): Promise<{
   currentBySite: Map<string, DayPoint[]>;
   compareBySite: Map<string, DayPoint[]>;
-  excludedInCurrentBySite: Map<string, number>;
-  /** Days with no snapshot row at all in the current period (sync gap, not an anomaly exclusion) -- see the "missingDays" doc comment where this is surfaced. */
+  /** Days in the current period flagged as a traffic spike (see anomaly.ts) -- informational, these ARE included in the totals above. */
+  flaggedInCurrentBySite: Map<string, number>;
+  /** Days with no snapshot row at all in the current period (sync gap) -- see the "missingDays" doc comment where this is surfaced. */
   missingInCurrentBySite: Map<string, number>;
   /** Of those missing days, how many are older than PIWIK_DATA_RETENTION_DAYS -- Piwik Pro itself no longer has this data, so it will never be filled by a gap-fill run (see sync.ts backfillGaps). Surfaced separately so the UI doesn't imply these are just "not synced yet". */
   missingOutOfRetentionInCurrentBySite: Map<string, number>;
 }> {
   const compareRange = resolveComparisonRange(period);
-  const spanFrom = addDaysIso(compareRange.from, -ANOMALY_BASELINE_PADDING_DAYS);
-  const bulk = await getSnapshotsForSites(siteIds, spanFrom, period.to);
+  const bulk = await getSnapshotsForSites(siteIds, compareRange.from, period.to);
   const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
 
   const currentBySite = new Map<string, DayPoint[]>();
   const compareBySite = new Map<string, DayPoint[]>();
-  const excludedInCurrentBySite = new Map<string, number>();
+  const flaggedInCurrentBySite = new Map<string, number>();
   const missingInCurrentBySite = new Map<string, number>();
   const missingOutOfRetentionInCurrentBySite = new Map<string, number>();
 
   for (const id of siteIds) {
     const raw = bulk.get(id) ?? [];
-    const { clean, anomalies } = excludeAnomalies(raw);
     const inRange = (date: string, from: string, to: string) => date >= from && date <= to;
 
-    const currentRaw = clean.filter((r) => inRange(r.date, period.from, period.to));
-    const currentFilled = zeroFillDayPoints(toDayPoints(currentRaw), period.from, period.to);
+    const currentRaw = raw.filter((r) => inRange(r.date, period.from, period.to));
+    const currentAnomalousDates = new Set(flagAnomalies(currentRaw).keys());
+    const currentFilled = zeroFillDayPoints(toDayPoints(currentRaw, currentAnomalousDates), period.from, period.to);
     currentBySite.set(id, currentFilled);
+    flaggedInCurrentBySite.set(id, currentFilled.filter((p) => p.isAnomaly).length);
     const missing = currentFilled.filter((p) => p.isMissing);
     missingInCurrentBySite.set(id, missing.length);
     missingOutOfRetentionInCurrentBySite.set(id, missing.filter((p) => p.date < retentionFloorDate).length);
 
-    const compareRaw = clean.filter((r) => inRange(r.date, compareRange.from, compareRange.to));
-    compareBySite.set(id, zeroFillDayPoints(toDayPoints(compareRaw), compareRange.from, compareRange.to));
-
-    excludedInCurrentBySite.set(id, anomalies.filter((a) => inRange(a.date, period.from, period.to)).length);
+    const compareRaw = raw.filter((r) => inRange(r.date, compareRange.from, compareRange.to));
+    const compareAnomalousDates = new Set(flagAnomalies(compareRaw).keys());
+    compareBySite.set(id, zeroFillDayPoints(toDayPoints(compareRaw, compareAnomalousDates), compareRange.from, compareRange.to));
   }
 
-  return { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite };
+  return { currentBySite, compareBySite, flaggedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite };
+}
+
+/**
+ * Data outages (>=4 consecutive days with no real data, see trends.ts) per
+ * site. Tagged with `context` (current vs. comparison period) -- both matter:
+ * a current-period outage means "this site has no data right now", a
+ * compare-period outage is exactly what makes a % change meaningless (see
+ * buildPeriodFindings). Both are surfaced in the visible "0 stats" banner.
+ *
+ * Outages entirely before `earliestDataDate` are dropped -- that's not a
+ * broken tag, it's just before this account's history starts (already
+ * explained by the separate historyOk/retentionLimited banner). Without this,
+ * every site would show a multi-month "panne" for any period whose
+ * comparison window reaches earlier than the account's actual history,
+ * drowning out real outages in noise.
+ */
+function outagesBySite(
+  sites: SiteRecord[],
+  seriesBySite: Map<string, DayPoint[]>,
+  context: "current" | "compare",
+  earliestDataDate: string | null
+): Map<string, DataOutage[]> {
+  const result = new Map<string, DataOutage[]>();
+  for (const s of sites) {
+    const outages = detectDataOutages(seriesBySite.get(s.id) ?? [], s.id, s.name, s.continent);
+    const real = outages.filter((o) => !earliestDataDate || o.dateTo >= earliestDataDate);
+    result.set(s.id, real.map((o) => ({ ...o, context })));
+  }
+  return result;
+}
+
+function flattenOutagesFor(siteIds: string[], outages: Map<string, DataOutage[]>): DataOutage[] {
+  return siteIds.flatMap((id) => outages.get(id) ?? []);
 }
 
 interface KpiTotals {
@@ -251,6 +292,23 @@ function explainFinding(f: Finding, children: ChildKpi[]): string | undefined {
   return `Principal(aux) contributeur(s) : ${names}.`;
 }
 
+// A change this extreme is almost always a data-quality artifact (a thin or
+// gappy comparison baseline), never a real trend worth presenting as a
+// confident "bon signal" -- see the Finding.suspect doc comment.
+const SUSPECT_CHANGE_PCT_THRESHOLD = 1.0; // >100%
+// Suspect findings are kept (not dropped) so the extreme number and its
+// caveat are still visible, but must never outrank a real, trustworthy
+// finding in the sorted list.
+const SUSPECT_IMPACT_SCORE = 0.01;
+
+function suspectExplanation(changePct: number, compareOutages: DataOutage[]): string {
+  if (compareOutages.length > 0) {
+    const list = compareOutages.map((o) => `${o.siteName} sans donnée du ${o.dateFrom} au ${o.dateTo}`).join(", ");
+    return `Variation extrême (${changePct >= 0 ? "+" : ""}${(changePct * 100).toFixed(0)}%) très probablement causée par un trou de données sur la période de comparaison : ${list}. Vérifiez avant d'agir -- ce n'est probablement pas une vraie tendance.`;
+  }
+  return `Variation extrême (${changePct >= 0 ? "+" : ""}${(changePct * 100).toFixed(0)}%) à vérifier avant d'agir : une variation de cette ampleur vient presque toujours d'une base de comparaison anormalement faible ou incomplète, pas d'une vraie tendance métier.`;
+}
+
 /**
  * Findings scoped to exactly the period/comparison the user selected, unlike
  * /api/findings (a fixed rolling 7-vs-7-day statistical view used only for
@@ -263,6 +321,8 @@ function explainFinding(f: Finding, children: ChildKpi[]): string | undefined {
  *
  * `children`, when given (regions/global scope), lets each finding be
  * explained ("why") by naming which child sites drove it -- see explainFinding.
+ * `compareOutages`, when given, lets a suspect (>100%) finding point at the
+ * specific data outage that most likely caused it instead of a generic caveat.
  */
 function buildPeriodFindings(
   scope: Scope,
@@ -271,7 +331,8 @@ function buildPeriodFindings(
   current: KpiTotals,
   previous: KpiTotals,
   historyOk: boolean,
-  children?: ChildKpi[]
+  children?: ChildKpi[],
+  compareOutages: DataOutage[] = []
 ): Finding[] {
   if (!historyOk) return [];
   const findings: Finding[] = [];
@@ -281,6 +342,7 @@ function buildPeriodFindings(
     if (currentVal === null || previousVal === null) continue;
     const changePct = pctChange(currentVal, previousVal);
     if (changePct === null || Math.abs(changePct) < minAbsChangePct) continue;
+    const suspect = Math.abs(changePct) > SUSPECT_CHANGE_PCT_THRESHOLD;
     const finding: Finding = {
       scope,
       entityId,
@@ -291,9 +353,14 @@ function buildPeriodFindings(
       changePct,
       current: currentVal,
       previous: previousVal,
-      impactScore: Math.abs(changePct) * Math.log10(Math.max(currentVal, previousVal, 1) + 1),
+      impactScore: suspect ? SUSPECT_IMPACT_SCORE : Math.abs(changePct) * Math.log10(Math.max(currentVal, previousVal, 1) + 1),
+      suspect,
     };
-    if (children && children.length > 0) finding.explanation = explainFinding(finding, children);
+    if (suspect) {
+      finding.explanation = suspectExplanation(changePct, compareOutages);
+    } else if (children && children.length > 0) {
+      finding.explanation = explainFinding(finding, children);
+    }
     findings.push(finding);
   }
   return findings.sort((a, b) => b.impactScore - a.impactScore);
@@ -377,7 +444,17 @@ function formatRatio(ratio: number): string {
  */
 async function computeAllScopeFindings(
   period: PeriodQuery
-): Promise<{ findings: Finding[]; historyOk: boolean; retentionLimited: boolean; retentionFloorDate: string; compareRange: { from: string; to: string }; earliestDate: string | null; globalCurrent: KpiTotals; globalPrevious: KpiTotals }> {
+): Promise<{
+  findings: Finding[];
+  historyOk: boolean;
+  retentionLimited: boolean;
+  retentionFloorDate: string;
+  compareRange: { from: string; to: string };
+  earliestDate: string | null;
+  globalCurrent: KpiTotals;
+  globalPrevious: KpiTotals;
+  dataOutages: DataOutage[];
+}> {
   const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
   const compareRange = resolveComparisonRange(period);
   const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
@@ -385,12 +462,14 @@ async function computeAllScopeFindings(
   const retentionLimited = !historyOk && compareRange.from < retentionFloorDate;
 
   const { currentBySite, compareBySite } = await loadCleanSeriesBySite(sites.map((s) => s.id), period);
+  const currentOutagesBySite = outagesBySite(sites, currentBySite, "current", earliestDate);
+  const compareOutagesBySite = outagesBySite(sites, compareBySite, "compare", earliestDate);
   const allFindings: Finding[] = [];
 
   for (const s of sites) {
     const current = totalsOf(currentBySite.get(s.id) ?? []);
     const previous = totalsOf(compareBySite.get(s.id) ?? []);
-    const findings = buildPeriodFindings("site", s.id, s.name, current, previous, historyOk);
+    const findings = buildPeriodFindings("site", s.id, s.name, current, previous, historyOk, undefined, compareOutagesBySite.get(s.id) ?? []);
     const gap = checkOrganicSearchConsoleGap("site", s.id, s.name, current.organicSessions, current.searchConsoleClicks);
     if (gap) findings.push(gap);
     allFindings.push(...findings);
@@ -413,12 +492,13 @@ async function computeAllScopeFindings(
       current: totalsOf(currentBySite.get(id) ?? []),
       previous: totalsOf(compareBySite.get(id) ?? []),
     }));
-    const findings = buildPeriodFindings("continent", region, region, current, previous, historyOk, children);
+    const findings = buildPeriodFindings("continent", region, region, current, previous, historyOk, children, flattenOutagesFor(siteIds, compareOutagesBySite));
     const gap = checkOrganicSearchConsoleGap("continent", region, region, current.organicSessions, current.searchConsoleClicks);
     if (gap) findings.push(gap);
     allFindings.push(...findings);
   }
 
+  const allSiteIds = sites.map((s) => s.id);
   const globalCurrentSeries = aggregateDayPointSeries(sites.map((s) => currentBySite.get(s.id) ?? []));
   const globalCompareSeries = aggregateDayPointSeries(sites.map((s) => compareBySite.get(s.id) ?? []));
   const globalCurrent = totalsOf(globalCurrentSeries);
@@ -428,14 +508,15 @@ async function computeAllScopeFindings(
     current: totalsOf(currentBySite.get(s.id) ?? []),
     previous: totalsOf(compareBySite.get(s.id) ?? []),
   }));
-  const globalFindings = buildPeriodFindings("global", "global", "Tous sites", globalCurrent, globalPrevious, historyOk, globalChildren);
+  const globalFindings = buildPeriodFindings("global", "global", "Tous sites", globalCurrent, globalPrevious, historyOk, globalChildren, flattenOutagesFor(allSiteIds, compareOutagesBySite));
   const globalGap = checkOrganicSearchConsoleGap("global", "global", "Tous sites", globalCurrent.organicSessions, globalCurrent.searchConsoleClicks);
   if (globalGap) globalFindings.push(globalGap);
   allFindings.push(...globalFindings);
 
   allFindings.sort((a, b) => b.impactScore - a.impactScore);
+  const dataOutages = [...flattenOutagesFor(allSiteIds, currentOutagesBySite), ...flattenOutagesFor(allSiteIds, compareOutagesBySite)];
 
-  return { findings: allFindings, historyOk, retentionLimited, retentionFloorDate, compareRange, earliestDate, globalCurrent, globalPrevious };
+  return { findings: allFindings, historyOk, retentionLimited, retentionFloorDate, compareRange, earliestDate, globalCurrent, globalPrevious, dataOutages };
 }
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
@@ -454,13 +535,15 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
       const compareRange = resolveComparisonRange(period);
       const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
-      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
+      const { currentBySite, compareBySite, flaggedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
         await loadCleanSeriesBySite(sites.map((s) => s.id), period);
+      const currentOutagesBySite = outagesBySite(sites, currentBySite, "current", earliestDate);
+      const compareOutagesBySite = outagesBySite(sites, compareBySite, "compare", earliestDate);
       return sites.map((s) => {
         const current = totalsOf(currentBySite.get(s.id) ?? []);
         const previous = totalsOf(compareBySite.get(s.id) ?? []);
         const changes = withChanges(current, previous, historyOk);
-        const findings = buildPeriodFindings("site", s.id, s.name, current, previous, historyOk);
+        const findings = buildPeriodFindings("site", s.id, s.name, current, previous, historyOk, undefined, compareOutagesBySite.get(s.id) ?? []);
         const gap = checkOrganicSearchConsoleGap("site", s.id, s.name, current.organicSessions, current.searchConsoleClicks);
         if (gap) findings.push(gap);
         return {
@@ -468,9 +551,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           name: s.name,
           region: s.continent,
           ...changes,
-          excludedAnomalyDays: excludedInCurrentBySite.get(s.id) ?? 0,
+          flaggedAnomalyDays: flaggedInCurrentBySite.get(s.id) ?? 0,
           missingDays: missingInCurrentBySite.get(s.id) ?? 0,
           missingDaysOutOfRetention: missingOutOfRetentionInCurrentBySite.get(s.id) ?? 0,
+          dataOutages: [...(currentOutagesBySite.get(s.id) ?? []), ...(compareOutagesBySite.get(s.id) ?? [])],
           findings,
         };
       });
@@ -490,8 +574,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         list.push(s.id);
         byRegion.set(s.continent, list);
       }
-      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
+      const { currentBySite, compareBySite, flaggedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
         await loadCleanSeriesBySite(sites.map((s) => s.id), period);
+      const currentOutagesBySite = outagesBySite(sites, currentBySite, "current", earliestDate);
+      const compareOutagesBySite = outagesBySite(sites, compareBySite, "compare", earliestDate);
       const siteById = new Map(sites.map((s) => [s.id, s]));
       const result = [];
       for (const [region, siteIds] of byRegion) {
@@ -500,7 +586,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         const current = totalsOf(currentSeries);
         const previous = totalsOf(compareSeries);
         const changes = withChanges(current, previous, historyOk);
-        const excludedAnomalyDays = siteIds.reduce((a, id) => a + (excludedInCurrentBySite.get(id) ?? 0), 0);
+        const flaggedAnomalyDays = siteIds.reduce((a, id) => a + (flaggedInCurrentBySite.get(id) ?? 0), 0);
         const missingDays = siteIds.reduce((a, id) => a + (missingInCurrentBySite.get(id) ?? 0), 0);
         const missingDaysOutOfRetention = siteIds.reduce((a, id) => a + (missingOutOfRetentionInCurrentBySite.get(id) ?? 0), 0);
         const children: ChildKpi[] = siteIds.map((id) => ({
@@ -508,16 +594,17 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           current: totalsOf(currentBySite.get(id) ?? []),
           previous: totalsOf(compareBySite.get(id) ?? []),
         }));
-        const regionFindings = buildPeriodFindings("continent", region, region, current, previous, historyOk, children);
+        const regionFindings = buildPeriodFindings("continent", region, region, current, previous, historyOk, children, flattenOutagesFor(siteIds, compareOutagesBySite));
         const regionGap = checkOrganicSearchConsoleGap("continent", region, region, current.organicSessions, current.searchConsoleClicks);
         if (regionGap) regionFindings.push(regionGap);
         result.push({
           region,
           siteCount: siteIds.length,
           ...changes,
-          excludedAnomalyDays,
+          flaggedAnomalyDays,
           missingDays,
           missingDaysOutOfRetention,
+          dataOutages: [...flattenOutagesFor(siteIds, currentOutagesBySite), ...flattenOutagesFor(siteIds, compareOutagesBySite)],
           findings: regionFindings,
         });
       }
@@ -535,22 +622,26 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
       const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
       const retentionLimited = !historyOk && compareRange.from < retentionFloorDate;
-      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
+      const { currentBySite, compareBySite, flaggedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
         await loadCleanSeriesBySite(sites.map((s) => s.id), period);
+      const currentOutagesBySite = outagesBySite(sites, currentBySite, "current", earliestDate);
+      const compareOutagesBySite = outagesBySite(sites, compareBySite, "compare", earliestDate);
+      const allSiteIds = sites.map((s) => s.id);
       const currentSeries = aggregateDayPointSeries(sites.map((s) => currentBySite.get(s.id) ?? []));
       const compareSeries = aggregateDayPointSeries(sites.map((s) => compareBySite.get(s.id) ?? []));
       const current = totalsOf(currentSeries);
       const previous = totalsOf(compareSeries);
       const changes = withChanges(current, previous, historyOk);
-      const excludedAnomalyDays = sites.reduce((a, s) => a + (excludedInCurrentBySite.get(s.id) ?? 0), 0);
+      const flaggedAnomalyDays = sites.reduce((a, s) => a + (flaggedInCurrentBySite.get(s.id) ?? 0), 0);
       const missingDays = sites.reduce((a, s) => a + (missingInCurrentBySite.get(s.id) ?? 0), 0);
       const missingDaysOutOfRetention = sites.reduce((a, s) => a + (missingOutOfRetentionInCurrentBySite.get(s.id) ?? 0), 0);
+      const dataOutages = [...flattenOutagesFor(allSiteIds, currentOutagesBySite), ...flattenOutagesFor(allSiteIds, compareOutagesBySite)];
       const globalChildren: ChildKpi[] = sites.map((s) => ({
         name: s.name,
         current: totalsOf(currentBySite.get(s.id) ?? []),
         previous: totalsOf(compareBySite.get(s.id) ?? []),
       }));
-      const findings = buildPeriodFindings("global", "global", "Tous sites", current, previous, historyOk, globalChildren);
+      const findings = buildPeriodFindings("global", "global", "Tous sites", current, previous, historyOk, globalChildren, flattenOutagesFor(allSiteIds, compareOutagesBySite));
       const globalGap = checkOrganicSearchConsoleGap("global", "global", "Tous sites", current.organicSessions, current.searchConsoleClicks);
       if (globalGap) findings.push(globalGap);
 
@@ -580,9 +671,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         siteCount: sites.length,
         ...changes,
         series: currentSeries,
-        excludedAnomalyDays,
+        flaggedAnomalyDays,
         missingDays,
         missingDaysOutOfRetention,
+        dataOutages,
         findings,
         synthesisBullets,
       };
@@ -601,7 +693,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     const period = parsePeriodQuery(req.query);
     const cacheKey = `synthesis-period:${period.from}:${period.to}:${period.compare}`;
     return cached(cacheKey, async () => {
-      const { findings, historyOk, retentionLimited, retentionFloorDate, compareRange, earliestDate, globalCurrent, globalPrevious } =
+      const { findings, historyOk, retentionLimited, retentionFloorDate, compareRange, earliestDate, globalCurrent, globalPrevious, dataOutages } =
         await computeAllScopeFindings(period);
 
       const bullets = historyOk
@@ -624,6 +716,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         retentionFloorDate,
         earliestDataDate: earliestDate,
         findings: findings.slice(0, 30),
+        dataOutages,
         bullets,
       };
     });
@@ -634,30 +727,32 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const { scope, id } = req.query;
       const period = parsePeriodQuery(req.query);
-      const paddedFrom = addDaysIso(period.from, -ANOMALY_BASELINE_PADDING_DAYS);
 
       // This endpoint feeds the detail/analyst view: it intentionally returns raw,
       // unfiltered data (unlike sites/summary, regions, overview) but flags
       // anomalous days so the chart can highlight them instead of silently hiding them.
       if (scope === "site") {
         if (!id) return reply.code(400).send({ error: "id is required for scope=site" });
-        const bulk = await getSnapshotsForSites([id], paddedFrom, period.to);
+        const bulk = await getSnapshotsForSites([id], period.from, period.to);
         const raw = bulk.get(id) ?? [];
         const anomalousDates = new Set(flagAnomalies(raw).keys());
-        const inRange = raw.filter((r) => r.date >= period.from && r.date <= period.to);
-        return zeroFillDayPoints(toDayPoints(inRange, anomalousDates), period.from, period.to);
+        return zeroFillDayPoints(toDayPoints(raw, anomalousDates), period.from, period.to);
       }
       const sites = await getSites();
       const filtered = scope === "region" ? sites.filter((s) => s.continent === id) : sites;
       const bulk = await getSnapshotsForSites(
         filtered.map((s) => s.id),
-        paddedFrom,
+        period.from,
         period.to
       );
       const rowsBySite = filtered.map((s) => bulk.get(s.id) ?? []);
-      const anomalousDatesBySite = rowsBySite.map((r) => new Set(flagAnomalies(r).keys()));
-      const inRangeBySite = rowsBySite.map((rows) => rows.filter((r) => r.date >= period.from && r.date <= period.to));
-      const aggregated = aggregateDayPoints(inRangeBySite, anomalousDatesBySite);
+      // Anomaly detection runs on the region/global's OWN aggregate totals,
+      // not the union of each site's individual flag -- see aggregateDayPoints's
+      // doc comment (with 15-20 sites, "any one site flagged" was showing a red
+      // dot on almost every day even when the region's own traffic was normal).
+      const aggregated = aggregateDayPoints(rowsBySite);
+      const anomalousDates = flagAnomalies(aggregated);
+      for (const p of aggregated) p.isAnomaly = anomalousDates.has(p.date);
       return zeroFillDayPoints(aggregated, period.from, period.to);
     }
   );

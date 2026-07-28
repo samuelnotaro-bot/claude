@@ -4,6 +4,7 @@ import { SynthesisPanel } from "../components/SynthesisPanel";
 import { FindingsList } from "../components/FindingsList";
 import { GeoMismatchPanel } from "../components/GeoMismatchPanel";
 import { HistoryWarningBanner } from "../components/HistoryWarningBanner";
+import { DataOutageBanner } from "../components/DataOutageBanner";
 import { formatCompactNumber, formatDate } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
@@ -67,6 +68,8 @@ export function Synthesis() {
             earliestDataDate={periodSynthesis.earliestDataDate}
             retentionFloorDate={periodSynthesis.retentionFloorDate}
           />
+
+          <DataOutageBanner outages={periodSynthesis.dataOutages} />
 
           <div className="card">
             <h2>Résumé</h2>

@@ -1,6 +1,6 @@
 import { getSites, getSnapshotsForSite, saveSynthesis, type SnapshotRow } from "./repo.js";
 import { toDayPoints, aggregateDayPoints, findTrendsForEntity, rankFindings, type Finding, type DayPoint } from "./trends.js";
-import { excludeAnomalies } from "./anomaly.js";
+import { flagAnomalies } from "./anomaly.js";
 import { generateSynthesis } from "./synthesis.js";
 import type { Continent } from "./continent.js";
 
@@ -28,12 +28,12 @@ export async function runTrendAnalysis(): Promise<AnalysisResult> {
   const siteRowsById: Record<string, SnapshotRow[]> = {};
   for (const site of sites) {
     const rawRows = await getSnapshotsForSite(site.id, dateFrom, dateTo);
-    // Trend detection and the weekly synthesis must never mistake a traffic-flood
-    // anomaly for a real trend -- see anomaly.ts for why (Piwik Pro's own bot
-    // detection never fires on this data).
-    const { clean } = excludeAnomalies(rawRows);
-    siteRowsById[site.id] = clean;
-    siteSeries[site.id] = toDayPoints(clean);
+    // Totals must match Piwik Pro exactly, including traffic-flood days --
+    // flagged (not excluded) so the weekly synthesis can still call out a
+    // flood without silently changing what the numbers add up to.
+    const anomalousDates = new Set(flagAnomalies(rawRows).keys());
+    siteRowsById[site.id] = rawRows;
+    siteSeries[site.id] = toDayPoints(rawRows, anomalousDates);
   }
 
   const regionGroups = new Map<Continent, string[]>();

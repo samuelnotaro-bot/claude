@@ -1,8 +1,8 @@
 import { getSites, getSnapshotsForSites, type SiteRecord } from "./repo.js";
-import { flagAnomalies, type AnomalyChannel } from "./anomaly.js";
+import { flagAnomalies, SPIKE_RATIO_THRESHOLD, type AnomalyChannel } from "./anomaly.js";
 import { aggregateDayPoints } from "./trends.js";
 import type { SnapshotRow } from "./repo.js";
-import { resolveComparisonRange, pctChange, addDaysIso, ANOMALY_BASELINE_PADDING_DAYS, type PeriodQuery } from "./period.js";
+import { resolveComparisonRange, pctChange, type PeriodQuery } from "./period.js";
 
 export interface BotAnomalyEntry {
   siteId: string;
@@ -60,11 +60,10 @@ function mean(values: number[]): number {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
 }
 
-// A day must beat the period's own daily average by at least this much to
-// count as a "spike" worth listing -- deliberately lenient (no statistical
-// baseline requirement) compared to anomaly.ts's flood detector.
-const SPIKE_MIN_RATIO_OVER_AVERAGE = 1.15;
-const SPIKE_SITE_MIN_RATIO_OVER_AVERAGE = 1.3;
+// Same "pic" definition as anomaly.ts (>35% above average) -- one rule, used
+// identically for the global-day view here and the per-site view below.
+const SPIKE_MIN_RATIO_OVER_AVERAGE = SPIKE_RATIO_THRESHOLD;
+const SPIKE_SITE_MIN_RATIO_OVER_AVERAGE = SPIKE_RATIO_THRESHOLD;
 const MAX_SPIKES = 8;
 const MAX_SITES_PER_SPIKE = 5;
 
@@ -121,29 +120,22 @@ function computeTrafficSpikes(sites: SiteRecord[], rowsBySite: Map<string, Snaps
  * Drives the dedicated "Bots" tab: lists large organic/direct traffic swings
  * (see anomaly.ts -- generalized to flag either channel, not just organic),
  * quantifies the excess volume as a share of total measured traffic, a
- * lenient "top traffic growth days" list that doesn't need a long baseline,
- * plus a softer secondary signal (bounce-heavy sessions on organic/direct).
+ * "top traffic growth days" global view using the same rule, plus a softer
+ * secondary signal (bounce-heavy sessions on organic/direct).
  */
 export async function computeBotSignal(period: PeriodQuery): Promise<BotSignalResult> {
   const sites = await getSites();
-  const paddedFrom = addDaysIso(period.from, -ANOMALY_BASELINE_PADDING_DAYS);
-  const bulk = await getSnapshotsForSites(
-    sites.map((s) => s.id),
-    paddedFrom,
-    period.to
-  );
+  const bulk = await getSnapshotsForSites(sites.map((s) => s.id), period.from, period.to);
 
   const anomalies: BotAnomalyEntry[] = [];
   let totalSessions = 0;
 
   for (const site of sites) {
     const raw = bulk.get(site.id) ?? [];
-    const inPeriod = raw.filter((r) => r.date >= period.from && r.date <= period.to);
-    totalSessions += inPeriod.reduce((a, r) => a + r.sessions, 0);
+    totalSessions += raw.reduce((a, r) => a + r.sessions, 0);
 
     const flagged = flagAnomalies(raw);
     for (const [date, info] of flagged) {
-      if (date < period.from || date > period.to) continue;
       anomalies.push({
         siteId: site.id,
         siteName: site.name,
@@ -172,9 +164,7 @@ export async function computeBotSignal(period: PeriodQuery): Promise<BotSignalRe
     compareRange.from,
     compareRange.to
   );
-  const aggregatedCurrent = aggregateDayPoints(
-    sites.map((s) => (bulk.get(s.id) ?? []).filter((r) => r.date >= period.from && r.date <= period.to))
-  );
+  const aggregatedCurrent = aggregateDayPoints(sites.map((s) => bulk.get(s.id) ?? []));
   const aggregatedCompare = aggregateDayPoints(sites.map((s) => compareBulk.get(s.id) ?? []));
   const shareOf = (points: typeof aggregatedCurrent) => {
     const s = points.reduce((a, p) => a + p.sessions, 0);
