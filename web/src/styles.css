@@ -118,9 +118,10 @@ body {
 .brand-bar {
   position: relative;
   overflow: hidden;
-  background-color: var(--brand-c1-900);
-  /* Dégradé bleu uniquement (palette c1) -- pas de jaune dans le hero. */
-  background-image: linear-gradient(115deg, var(--brand-c1-900) 0%, var(--brand-c1-800) 30%, var(--brand-c1-700) 55%, var(--brand-c1-600) 78%, var(--brand-c1-400) 130%);
+  background-color: var(--brand-c1-700);
+  /* Dégradé bleu uniquement (palette c1) -- pas de jaune, et pas de c1-900/800
+     (trop violacés) à gauche : on reste sur des tons bleus francs. */
+  background-image: linear-gradient(115deg, var(--brand-c1-700) 0%, var(--brand-c1-600) 40%, var(--brand-c1-400) 130%);
   border-bottom: 3px solid var(--brand-c1-400);
 }
 
@@ -157,10 +158,9 @@ body {
 
 .app-header {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
+  align-items: flex-start;
   flex-wrap: wrap;
+  gap: 16px;
 }
 
 .app-header h1 {
@@ -174,7 +174,13 @@ body {
 
 .product-lockup {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.product-lockup-row {
+  display: flex;
+  align-items: center;
   gap: 14px;
 }
 
@@ -252,6 +258,10 @@ body {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  /* Reste ancré à droite même quand product-lockup passe sur 2 lignes et que
+     ce bloc est repoussé sur sa propre ligne (margin auto reste actif par
+     ligne dans un conteneur flex multi-lignes). */
+  margin-left: auto;
 }
 
 .period-select {

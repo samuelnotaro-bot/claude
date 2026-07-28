@@ -124,19 +124,19 @@ export function App() {
         <header className="brand-bar">
           <div className="app-header">
             <div className="product-lockup">
-              <span className="brand-pictogram-tile">
-                <img src="/socomec-pictogram.svg" alt="" className="brand-pictogram" />
-              </span>
-              <div>
+              <div className="product-lockup-row">
+                <span className="brand-pictogram-tile">
+                  <img src="/socomec-pictogram.svg" alt="" className="brand-pictogram" />
+                </span>
                 <div className="product-name">
                   <span className="product-name-mk">MKWEB</span>
                   <span className="product-name-tool">Piwik Pro Analyzer</span>
                   <span className="product-version">V1.0</span>
                 </div>
-                <div className="subtitle">
-                  Empowering data-driven organizations to unlock actionable intelligence and accelerate performance through
-                  AI-powered KPI interpretation.
-                </div>
+              </div>
+              <div className="subtitle">
+                Empowering data-driven organizations to unlock actionable intelligence and accelerate performance through
+                AI-powered KPI interpretation.
               </div>
             </div>
             <div className="header-controls">
