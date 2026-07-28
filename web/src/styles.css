@@ -317,6 +317,15 @@ body {
 .delta-down { color: var(--critical); }
 .delta-flat { color: var(--text-muted); }
 
+.cell-value {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.25;
+}
+.cell-value-main { white-space: nowrap; }
+.cell-value-delta { font-size: 11px; font-weight: 600; }
+
 .chart-note {
   font-size: 12px;
   color: var(--text-muted);

@@ -4,14 +4,14 @@ import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA, dataQualityNote } from "../lib/format";
+import { CellValue } from "../components/CellValue";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 type SortKey =
   | "name"
   | "region"
   | "sessions"
-  | "sessionsChangePct"
   | "organicSessions"
   | "aiReferralSessions"
   | "searchConsoleClicks"
@@ -72,8 +72,9 @@ export function Sites() {
       <div className="card">
         <h2>Sites</h2>
         <p className="chart-note">
-          Cliquez une ligne pour le détail. "Trafic IA" et "Signal bot" sont des estimations (pas des métriques natives Piwik
-          Pro) -- voir la section détaillée sous le tableau pour l'explication complète de chaque colonne.
+          Cliquez une ligne pour le détail. Sous chaque valeur : variation {deltaLabel}. "Trafic IA" et "Signal bot" sont des
+          estimations (pas des métriques natives Piwik Pro) -- voir la section détaillée sous le tableau pour l'explication
+          complète de chaque colonne.
         </p>
         <div className="table-scroll">
           <table className="data-table">
@@ -82,7 +83,6 @@ export function Sites() {
                 <th onClick={() => toggleSort("name")}>Site</th>
                 <th onClick={() => toggleSort("region")}>Région</th>
                 <th onClick={() => toggleSort("sessions")}>Sessions</th>
-                <th onClick={() => toggleSort("sessionsChangePct")}>Δ {deltaLabel}</th>
                 <th onClick={() => toggleSort("organicSessions")}>Trafic organique</th>
                 <th onClick={() => toggleSort("aiReferralSessions")} title="Estimation -- reclassement par domaine référent connu, pas une métrique native Piwik Pro.">
                   Trafic IA
@@ -104,18 +104,33 @@ export function Sites() {
                 <tr key={s.id} onClick={() => setSelected(s)} style={{ fontWeight: s.id === selected?.id ? 600 : 400 }}>
                   <td>{s.name}</td>
                   <td>{s.region}</td>
-                  <td>{formatCompactNumber(s.sessions)}</td>
-                  <td className={s.sessionsChangePct !== null && s.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
-                    {formatPct(s.sessionsChangePct)}
+                  <td>
+                    <CellValue value={formatCompactNumber(s.sessions)} deltaPct={s.sessionsChangePct} />
                   </td>
-                  <td>{formatCompactNumber(s.organicSessions)}</td>
-                  <td>{formatCompactNumberOrNA(s.aiReferralSessions)}</td>
-                  <td>{formatCompactNumberOrNA(s.searchConsoleClicks)}</td>
-                  <td>{formatPctOrNA(s.lowEngagementShare)}</td>
-                  <td>{formatCompactNumber(s.rfq)}</td>
-                  <td>{formatCompactNumber(s.support)}</td>
-                  <td>{formatCompactNumber(s.downloads)}</td>
-                  <td>{(s.conversionRate * 100).toFixed(2)}%</td>
+                  <td>
+                    <CellValue value={formatCompactNumber(s.organicSessions)} deltaPct={s.organicSessionsChangePct} />
+                  </td>
+                  <td>
+                    <CellValue value={formatCompactNumberOrNA(s.aiReferralSessions)} deltaPct={s.aiReferralSessionsChangePct} />
+                  </td>
+                  <td>
+                    <CellValue value={formatCompactNumberOrNA(s.searchConsoleClicks)} deltaPct={s.searchConsoleClicksChangePct} />
+                  </td>
+                  <td>
+                    <CellValue value={formatPctOrNA(s.lowEngagementShare)} deltaPct={s.lowEngagementShareChangePct} deltaIsGoodWhenUp={false} />
+                  </td>
+                  <td>
+                    <CellValue value={formatCompactNumber(s.rfq)} deltaPct={s.rfqChangePct} />
+                  </td>
+                  <td>
+                    <CellValue value={formatCompactNumber(s.support)} deltaPct={s.supportChangePct} />
+                  </td>
+                  <td>
+                    <CellValue value={formatCompactNumber(s.downloads)} deltaPct={s.downloadsChangePct} />
+                  </td>
+                  <td>
+                    <CellValue value={`${(s.conversionRate * 100).toFixed(2)}%`} deltaPct={s.conversionRateChangePct} />
+                  </td>
                   <td title={ANOMALY_HEADER_TITLE}>{s.excludedAnomalyDays > 0 ? s.excludedAnomalyDays : "—"}</td>
                   <td title={MISSING_HEADER_TITLE}>{s.missingDays > 0 ? s.missingDays : "—"}</td>
                 </tr>
@@ -129,7 +144,7 @@ export function Sites() {
         <>
           <h3 className="section-title">Détail & tendances — {selected.name}</h3>
           {(() => {
-            const note = dataQualityNote(selected.excludedAnomalyDays, selected.missingDays);
+            const note = dataQualityNote(selected.excludedAnomalyDays, selected.missingDays, selected.missingDaysOutOfRetention);
             return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selected.name} ci-dessus.</p> : null;
           })()}
           <div className="kpi-grid">

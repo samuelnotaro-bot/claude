@@ -80,7 +80,7 @@ export function Regions() {
         <>
           <h3 className="section-title">SEO/GEO, signal bot & conversion — {selectedRegion.region}</h3>
           {(() => {
-            const note = dataQualityNote(selectedRegion.excludedAnomalyDays, selectedRegion.missingDays);
+            const note = dataQualityNote(selectedRegion.excludedAnomalyDays, selectedRegion.missingDays, selectedRegion.missingDaysOutOfRetention);
             return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selectedRegion.region} ci-dessous.</p> : null;
           })()}
           <div className="kpi-grid">

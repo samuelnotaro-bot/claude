@@ -158,20 +158,31 @@ Cette valeur prime sur la règle par défaut.
 Deux mécanismes distincts partagent le même moteur de règles
 (`server/src/synthesis.ts`, aucun appel API donc coût nul et 100% prévisible) :
 
-1. **Synthèse hebdomadaire persistée** (onglet Synthèses) : chaque semaine
-   (configurable via `SYNTHESIS_CRON`), le moteur calcule les variations
-   7j/7j précédents, isole les écarts statistiquement significatifs (z-score
-   vs. 8 semaines de référence), et enregistre 5-6 points d'action dans
-   l'historique. Le bouton **Générer maintenant** relance ce calcul à la
-   demande.
-2. **Synthèse à la volée, cohérente avec la période sélectionnée** (carte
-   "Synthèse — plan d'action" sur la vue d'ensemble) : recalculée à chaque
-   changement de période/comparaison directement dans `/api/overview`, à
-   partir des mêmes KPIs affichés juste au-dessus — pas de z-score/historique
-   de 8 semaines requis (une période personnalisée courte n'en a pas
-   forcément), juste un seuil de variation relative par métrique. Les
-   panneaux "Analyse & plan d'action" des onglets Régions et Sites suivent le
-   même principe, scopés à la région/au site sélectionné.
+1. **Synthèse hebdomadaire persistée** (bas de l'onglet Synthèses,
+   "Journal historique") : chaque semaine (configurable via
+   `SYNTHESIS_CRON`), le moteur calcule les variations 7j/7j précédents,
+   isole les écarts statistiquement significatifs (z-score vs. 8 semaines de
+   référence), et enregistre 5-6 points d'action dans l'historique. Le
+   bouton **Générer maintenant** relance ce calcul à la demande. Fenêtre
+   fixe, indépendante du sélecteur de période -- conservée comme archive.
+2. **Synthèse à la volée, cohérente avec la période sélectionnée** (haut de
+   l'onglet Synthèses, endpoint dédié `/api/synthesis/period`) : recalculée
+   à chaque changement de période/comparaison, à partir des mêmes KPIs
+   affichés dans les autres onglets — pas de z-score/historique de 8
+   semaines requis (une période personnalisée courte n'en a pas forcément),
+   juste un seuil de variation relative par métrique. Contrairement à la
+   carte "Synthèse — plan d'action" de la vue d'ensemble (qui ne classe que
+   les findings à l'échelle globale), cette synthèse combine les findings de
+   **tous les sites, toutes les régions et le global** pour la période, donc
+   une chute localisée sur un seul site apparaît même si elle ne bouge pas
+   le total agrégé. Elle intègre aussi, sans appel Piwik Pro supplémentaire :
+   - le **signal bot** de la période (`computeBotSignal`, 100% local) ;
+   - les **derniers résultats stockés** du contrôle de géolocalisation
+     (avec leur horodatage `checkedAt` et leur plan d'action) --
+     volontairement **pas** recalculés à la volée pour ne pas déclencher un
+     appel Piwik Pro à chaque changement de période (voir "Fiabilité de la
+     synchronisation" plus bas) ; relancez le contrôle depuis l'onglet
+     Localisation pour une donnée à jour sur la période choisie.
 
 Les deux utilisent le même texte d'action par métrique
 (`bulletForFinding`), donc la voix reste cohérente entre le journal
@@ -280,11 +291,19 @@ métriques concernées plutôt que documentées seulement ici :
   plus bas) : volontaire, pour ne pas laisser une vague de bots gonfler les
   chiffres business. Indiqué par un bandeau d'avertissement en haut de chaque
   vue quand ça s'applique.
-- **Jours de données manquantes** (`missingDays`) : un vrai trou de
-  synchronisation (voir "Fiabilité de la synchronisation" plus bas) --
-  contrairement à l'exclusion ci-dessus, ce n'est pas voulu, et ça veut dire
-  que les totaux **sous-estiment** les vrais chiffres Piwik Pro d'autant.
-  Même bandeau d'avertissement, avec le nombre de jours concernés.
+- **Jours de données manquantes** (`missingDays`) : les totaux
+  **sous-estiment** les vrais chiffres Piwik Pro d'autant. Deux causes bien
+  distinctes, affichées séparément dans le même bandeau plutôt que
+  mélangées :
+  - un vrai **trou de synchronisation** (voir "Fiabilité de la
+    synchronisation" plus bas) -- pas voulu, mais **comblable** via le
+    bouton "Combler les trous de données" ;
+  - des jours **hors de la période de rétention Piwik Pro**
+    (`missingDaysOutOfRetention`, voir `PIWIK_DATA_RETENTION_DAYS`
+    ci-dessous) -- Piwik Pro n'a plus cette donnée nulle part, donc **aucun
+    bouton ne peut jamais la récupérer**. Le message le dit explicitement
+    ("ne seront jamais synchronisés") plutôt que de laisser espérer un
+    comblement possible.
 - **Métriques dérivées, pas natives Piwik Pro** : trafic référé par IA
   (reclassement par domaine référent, voir `aiReferrers.ts`), signal bot
   (proxy à partir des sessions rebond organique/direct), et la répartition
@@ -293,15 +312,26 @@ métriques concernées plutôt que documentées seulement ici :
   Pro elle-même -- chaque tuile concernée porte la mention "(estimation)" et
   une note l'explique.
 
-Par ailleurs, **votre compte Piwik Pro ne conserve pas plus de ~60 jours
-d'historique** : toute comparaison nécessitant de remonter plus loin (période
-personnalisée longue, préréglages 90/365 jours avec comparaison à la période
-précédente, ou toute comparaison "à l'année précédente") affiche "—" avec un
-message explicite plutôt qu'un delta -- ce n'est pas une absence de variation,
-c'est l'absence de donnée pour la comparer. Alignez `BACKFILL_DAYS` sur cette
-même limite (au lieu de la valeur par défaut de 90) pour éviter de gaspiller
-des appels Piwik Pro (soumis à une limite par minute, voir plus bas) sur des
-dates qui ne renverront jamais rien.
+Par ailleurs, **votre compte Piwik Pro ne conserve pas plus de
+`PIWIK_DATA_RETENTION_DAYS` jours d'historique** (60 par défaut -- ajustez
+selon votre contrat Piwik Pro réel) : toute comparaison nécessitant de
+remonter plus loin (période personnalisée longue, préréglages 90/365 jours
+avec comparaison à la période précédente, ou toute comparaison "à l'année
+précédente") affiche "—" avec un message explicite plutôt qu'un delta -- ce
+n'est pas une absence de variation, c'est l'absence de donnée pour la
+comparer. Le bandeau distingue explicitement ce cas (`retentionLimited`,
+impossible à combler) d'un simple trou de synchronisation (`historyOk` faux
+mais comparaison théoriquement disponible -- comblable via "Combler les
+trous de données"), pour ne jamais laisser croire qu'un bouton peut résoudre
+une limite de rétention Piwik Pro.
+
+`server/src/sync.ts#backfillGaps` applique la même limite : les jours
+manquants plus vieux que `PIWIK_DATA_RETENTION_DAYS` ne sont **jamais**
+retentés (Piwik Pro ne les renverra plus) et sont comptés séparément
+(`daysOutOfRetention`) plutôt que de gaspiller le budget d'appels Piwik Pro
+limité (voir plus bas) sur des dates qui échoueraient indéfiniment. Alignez
+aussi `BACKFILL_DAYS` sur cette même limite (au lieu de la valeur par défaut
+de 90) pour la même raison au premier démarrage.
 
 ## Explication des variations ("pourquoi ce chiffre a bougé")
 
@@ -388,10 +418,13 @@ met le service en veille après une période d'inactivité :
   trous *à l'intérieur* de l'historique (ex. "pas de données du 1er au 19
   juillet"), pas seulement à la fin, ce qui rendait aussi les comparaisons de
   période peu fiables. `server/src/sync.ts#backfillGaps` scanne tout
-  l'historique existant (pas seulement la queue) pour trouver les couples
-  (site, jour) manquants et les recharge, plafonné à 300 par exécution pour
-  éviter une rafale d'appels API après une très longue absence — le reste se
-  comble à l'exécution suivante (prochain réveil, ou immédiatement via le
+  l'historique existant (pas seulement la queue), à l'exclusion des jours
+  plus vieux que `PIWIK_DATA_RETENTION_DAYS` (voir "Transparence sur les
+  données affichées" plus haut -- ceux-là ne seront jamais renvoyés par
+  Piwik Pro), pour trouver les couples (site, jour) manquants et les
+  recharge, plafonné à 25 par exécution pour éviter une rafale d'appels API
+  après une très longue absence — le reste se comble à l'exécution suivante
+  (prochain réveil, ou immédiatement via le
   bouton **Combler les trous de données** sur la vue d'ensemble, qui appelle
   `POST /api/data/fill-gaps`).
 

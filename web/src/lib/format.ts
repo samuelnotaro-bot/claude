@@ -26,17 +26,28 @@ export function formatPct(n: number | null, digits = 1): string {
  * Combined disclosure of everything that makes the totals on a view *not* a
  * raw pass-through of Piwik Pro's own numbers: statistically-flagged
  * traffic-flood days excluded on purpose (see anomaly.ts), and days with no
- * synced data at all (a sync gap -- the totals below likely undercount the
- * real Piwik Pro figures by however many days are missing). Returns null
- * when neither applies, i.e. the totals are a complete, unmodified sum.
+ * synced data at all (the totals below likely undercount the real Piwik Pro
+ * figures by however many days are missing). Missing days are split into
+ * those Piwik Pro can still provide (a sync gap, fixable by "Combler les
+ * trous de données") and those older than the account's data retention
+ * window (missingDaysOutOfRetention -- Piwik Pro no longer has this data at
+ * all, so it will never be filled, no matter how many times a gap-fill
+ * retries it). Returns null when nothing applies, i.e. the totals are a
+ * complete, unmodified sum.
  */
-export function dataQualityNote(excludedAnomalyDays: number, missingDays: number): string | null {
+export function dataQualityNote(excludedAnomalyDays: number, missingDays: number, missingDaysOutOfRetention = 0): string | null {
   const parts: string[] = [];
   if (excludedAnomalyDays > 0) {
     parts.push(`${excludedAnomalyDays} jour${excludedAnomalyDays > 1 ? "s" : ""} de pic trafic anormal exclu${excludedAnomalyDays > 1 ? "s" : ""} des totaux`);
   }
-  if (missingDays > 0) {
-    parts.push(`${missingDays} jour${missingDays > 1 ? "s" : ""} de données manquant${missingDays > 1 ? "s" : ""} (non encore synchronisé${missingDays > 1 ? "s" : ""} -- totaux sous-estimés d'autant)`);
+  const fixableMissing = missingDays - missingDaysOutOfRetention;
+  if (fixableMissing > 0) {
+    parts.push(`${fixableMissing} jour${fixableMissing > 1 ? "s" : ""} de données manquant${fixableMissing > 1 ? "s" : ""} (non encore synchronisé${fixableMissing > 1 ? "s" : ""} -- totaux sous-estimés d'autant)`);
+  }
+  if (missingDaysOutOfRetention > 0) {
+    parts.push(
+      `${missingDaysOutOfRetention} jour${missingDaysOutOfRetention > 1 ? "s" : ""} de données définitivement indisponible${missingDaysOutOfRetention > 1 ? "s" : ""} (hors période de rétention Piwik Pro -- ne sera${missingDaysOutOfRetention > 1 ? "ont" : ""} jamais synchronisé${missingDaysOutOfRetention > 1 ? "s" : ""})`
+    );
   }
   return parts.length > 0 ? parts.join(" · ") : null;
 }

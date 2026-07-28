@@ -74,15 +74,19 @@ async function loadCleanSeriesBySite(
   excludedInCurrentBySite: Map<string, number>;
   /** Days with no snapshot row at all in the current period (sync gap, not an anomaly exclusion) -- see the "missingDays" doc comment where this is surfaced. */
   missingInCurrentBySite: Map<string, number>;
+  /** Of those missing days, how many are older than PIWIK_DATA_RETENTION_DAYS -- Piwik Pro itself no longer has this data, so it will never be filled by a gap-fill run (see sync.ts backfillGaps). Surfaced separately so the UI doesn't imply these are just "not synced yet". */
+  missingOutOfRetentionInCurrentBySite: Map<string, number>;
 }> {
   const compareRange = resolveComparisonRange(period);
   const spanFrom = addDaysIso(compareRange.from, -ANOMALY_BASELINE_PADDING_DAYS);
   const bulk = await getSnapshotsForSites(siteIds, spanFrom, period.to);
+  const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
 
   const currentBySite = new Map<string, DayPoint[]>();
   const compareBySite = new Map<string, DayPoint[]>();
   const excludedInCurrentBySite = new Map<string, number>();
   const missingInCurrentBySite = new Map<string, number>();
+  const missingOutOfRetentionInCurrentBySite = new Map<string, number>();
 
   for (const id of siteIds) {
     const raw = bulk.get(id) ?? [];
@@ -92,7 +96,9 @@ async function loadCleanSeriesBySite(
     const currentRaw = clean.filter((r) => inRange(r.date, period.from, period.to));
     const currentFilled = zeroFillDayPoints(toDayPoints(currentRaw), period.from, period.to);
     currentBySite.set(id, currentFilled);
-    missingInCurrentBySite.set(id, currentFilled.filter((p) => p.isMissing).length);
+    const missing = currentFilled.filter((p) => p.isMissing);
+    missingInCurrentBySite.set(id, missing.length);
+    missingOutOfRetentionInCurrentBySite.set(id, missing.filter((p) => p.date < retentionFloorDate).length);
 
     const compareRaw = clean.filter((r) => inRange(r.date, compareRange.from, compareRange.to));
     compareBySite.set(id, zeroFillDayPoints(toDayPoints(compareRaw), compareRange.from, compareRange.to));
@@ -100,7 +106,7 @@ async function loadCleanSeriesBySite(
     excludedInCurrentBySite.set(id, anomalies.filter((a) => inRange(a.date, period.from, period.to)).length);
   }
 
-  return { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite };
+  return { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite };
 }
 
 interface KpiTotals {
@@ -361,6 +367,77 @@ function formatRatio(ratio: number): string {
   return ratio.toFixed(ratio >= 10 ? 0 : 1);
 }
 
+/**
+ * Findings across ALL scopes (every site, every region, and global) for one
+ * period -- unlike the individual /api/sites/summary, /api/regions and
+ * /api/overview routes, which each only return the findings for their own
+ * scope. Built for the Synthèses tab: a per-site swing (e.g. one country's
+ * organic traffic collapsing) is exactly the kind of thing a "comprehensive"
+ * synthesis must not miss just because it doesn't move the global total.
+ */
+async function computeAllScopeFindings(
+  period: PeriodQuery
+): Promise<{ findings: Finding[]; historyOk: boolean; retentionLimited: boolean; retentionFloorDate: string; compareRange: { from: string; to: string }; earliestDate: string | null; globalCurrent: KpiTotals; globalPrevious: KpiTotals }> {
+  const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
+  const compareRange = resolveComparisonRange(period);
+  const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
+  const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
+  const retentionLimited = !historyOk && compareRange.from < retentionFloorDate;
+
+  const { currentBySite, compareBySite } = await loadCleanSeriesBySite(sites.map((s) => s.id), period);
+  const allFindings: Finding[] = [];
+
+  for (const s of sites) {
+    const current = totalsOf(currentBySite.get(s.id) ?? []);
+    const previous = totalsOf(compareBySite.get(s.id) ?? []);
+    const findings = buildPeriodFindings("site", s.id, s.name, current, previous, historyOk);
+    const gap = checkOrganicSearchConsoleGap("site", s.id, s.name, current.organicSessions, current.searchConsoleClicks);
+    if (gap) findings.push(gap);
+    allFindings.push(...findings);
+  }
+
+  const byRegion = new Map<Continent, string[]>();
+  for (const s of sites) {
+    const list = byRegion.get(s.continent) ?? [];
+    list.push(s.id);
+    byRegion.set(s.continent, list);
+  }
+  const siteById = new Map(sites.map((s) => [s.id, s]));
+  for (const [region, siteIds] of byRegion) {
+    const currentSeries = aggregateDayPointSeries(siteIds.map((id) => currentBySite.get(id) ?? []));
+    const compareSeries = aggregateDayPointSeries(siteIds.map((id) => compareBySite.get(id) ?? []));
+    const current = totalsOf(currentSeries);
+    const previous = totalsOf(compareSeries);
+    const children: ChildKpi[] = siteIds.map((id) => ({
+      name: siteById.get(id)?.name ?? id,
+      current: totalsOf(currentBySite.get(id) ?? []),
+      previous: totalsOf(compareBySite.get(id) ?? []),
+    }));
+    const findings = buildPeriodFindings("continent", region, region, current, previous, historyOk, children);
+    const gap = checkOrganicSearchConsoleGap("continent", region, region, current.organicSessions, current.searchConsoleClicks);
+    if (gap) findings.push(gap);
+    allFindings.push(...findings);
+  }
+
+  const globalCurrentSeries = aggregateDayPointSeries(sites.map((s) => currentBySite.get(s.id) ?? []));
+  const globalCompareSeries = aggregateDayPointSeries(sites.map((s) => compareBySite.get(s.id) ?? []));
+  const globalCurrent = totalsOf(globalCurrentSeries);
+  const globalPrevious = totalsOf(globalCompareSeries);
+  const globalChildren: ChildKpi[] = sites.map((s) => ({
+    name: s.name,
+    current: totalsOf(currentBySite.get(s.id) ?? []),
+    previous: totalsOf(compareBySite.get(s.id) ?? []),
+  }));
+  const globalFindings = buildPeriodFindings("global", "global", "Tous sites", globalCurrent, globalPrevious, historyOk, globalChildren);
+  const globalGap = checkOrganicSearchConsoleGap("global", "global", "Tous sites", globalCurrent.organicSessions, globalCurrent.searchConsoleClicks);
+  if (globalGap) globalFindings.push(globalGap);
+  allFindings.push(...globalFindings);
+
+  allFindings.sort((a, b) => b.impactScore - a.impactScore);
+
+  return { findings: allFindings, historyOk, retentionLimited, retentionFloorDate, compareRange, earliestDate, globalCurrent, globalPrevious };
+}
+
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/health", async () => ({ ok: true, mode: config.mode }));
 
@@ -377,10 +454,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
       const compareRange = resolveComparisonRange(period);
       const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
-      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite } = await loadCleanSeriesBySite(
-        sites.map((s) => s.id),
-        period
-      );
+      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
+        await loadCleanSeriesBySite(sites.map((s) => s.id), period);
       return sites.map((s) => {
         const current = totalsOf(currentBySite.get(s.id) ?? []);
         const previous = totalsOf(compareBySite.get(s.id) ?? []);
@@ -395,6 +470,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           ...changes,
           excludedAnomalyDays: excludedInCurrentBySite.get(s.id) ?? 0,
           missingDays: missingInCurrentBySite.get(s.id) ?? 0,
+          missingDaysOutOfRetention: missingOutOfRetentionInCurrentBySite.get(s.id) ?? 0,
           findings,
         };
       });
@@ -414,10 +490,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         list.push(s.id);
         byRegion.set(s.continent, list);
       }
-      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite } = await loadCleanSeriesBySite(
-        sites.map((s) => s.id),
-        period
-      );
+      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
+        await loadCleanSeriesBySite(sites.map((s) => s.id), period);
       const siteById = new Map(sites.map((s) => [s.id, s]));
       const result = [];
       for (const [region, siteIds] of byRegion) {
@@ -428,6 +502,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         const changes = withChanges(current, previous, historyOk);
         const excludedAnomalyDays = siteIds.reduce((a, id) => a + (excludedInCurrentBySite.get(id) ?? 0), 0);
         const missingDays = siteIds.reduce((a, id) => a + (missingInCurrentBySite.get(id) ?? 0), 0);
+        const missingDaysOutOfRetention = siteIds.reduce((a, id) => a + (missingOutOfRetentionInCurrentBySite.get(id) ?? 0), 0);
         const children: ChildKpi[] = siteIds.map((id) => ({
           name: siteById.get(id)?.name ?? id,
           current: totalsOf(currentBySite.get(id) ?? []),
@@ -442,6 +517,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           ...changes,
           excludedAnomalyDays,
           missingDays,
+          missingDaysOutOfRetention,
           findings: regionFindings,
         });
       }
@@ -457,10 +533,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
       const compareRange = resolveComparisonRange(period);
       const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
-      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite } = await loadCleanSeriesBySite(
-        sites.map((s) => s.id),
-        period
-      );
+      const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
+      const retentionLimited = !historyOk && compareRange.from < retentionFloorDate;
+      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
+        await loadCleanSeriesBySite(sites.map((s) => s.id), period);
       const currentSeries = aggregateDayPointSeries(sites.map((s) => currentBySite.get(s.id) ?? []));
       const compareSeries = aggregateDayPointSeries(sites.map((s) => compareBySite.get(s.id) ?? []));
       const current = totalsOf(currentSeries);
@@ -468,6 +544,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const changes = withChanges(current, previous, historyOk);
       const excludedAnomalyDays = sites.reduce((a, s) => a + (excludedInCurrentBySite.get(s.id) ?? 0), 0);
       const missingDays = sites.reduce((a, s) => a + (missingInCurrentBySite.get(s.id) ?? 0), 0);
+      const missingDaysOutOfRetention = sites.reduce((a, s) => a + (missingOutOfRetentionInCurrentBySite.get(s.id) ?? 0), 0);
       const globalChildren: ChildKpi[] = sites.map((s) => ({
         name: s.name,
         current: totalsOf(currentBySite.get(s.id) ?? []),
@@ -498,13 +575,56 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         comparisonTo: compareRange.to,
         historyOk,
         earliestDataDate: earliestDate,
+        retentionLimited,
+        retentionFloorDate,
         siteCount: sites.length,
         ...changes,
         series: currentSeries,
         excludedAnomalyDays,
         missingDays,
+        missingDaysOutOfRetention,
         findings,
         synthesisBullets,
+      };
+    });
+  });
+
+  // Comprehensive, period-scoped synthesis for the Synthèses tab: unlike
+  // /api/overview's synthesisBullets (global scope only), this ranks findings
+  // across every site AND region too, so a single site's collapse shows up
+  // here even when it doesn't move the global total. Bot signal and geo
+  // mismatch data are deliberately NOT included here -- both are cheap,
+  // period-aware (bots) or already-stored (geo mismatch) and fetched directly
+  // by the frontend (see api.bots / api.geoMismatches) to avoid duplicating
+  // that logic server-side.
+  app.get<{ Querystring: { from?: string; to?: string; compare?: string; days?: string } }>("/api/synthesis/period", async (req) => {
+    const period = parsePeriodQuery(req.query);
+    const cacheKey = `synthesis-period:${period.from}:${period.to}:${period.compare}`;
+    return cached(cacheKey, async () => {
+      const { findings, historyOk, retentionLimited, retentionFloorDate, compareRange, earliestDate, globalCurrent, globalPrevious } =
+        await computeAllScopeFindings(period);
+
+      const bullets = historyOk
+        ? generateSynthesis(findings, {
+            totalSessions: globalCurrent.sessions,
+            prevTotalSessions: globalPrevious.sessions,
+            conversionRate: globalCurrent.conversionRate,
+            prevConversionRate: globalPrevious.conversionRate,
+          }).bullets
+        : [];
+
+      return {
+        periodFrom: period.from,
+        periodTo: period.to,
+        compare: period.compare,
+        comparisonFrom: compareRange.from,
+        comparisonTo: compareRange.to,
+        historyOk,
+        retentionLimited,
+        retentionFloorDate,
+        earliestDataDate: earliestDate,
+        findings: findings.slice(0, 30),
+        bullets,
       };
     });
   });

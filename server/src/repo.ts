@@ -274,6 +274,8 @@ export interface GeoMismatchRecord {
   unexpectedDirectShare: number;
   /** Rule-based starter analysis / action plan for this finding (see geoMismatch.ts). */
   actionPlan: string;
+  /** When this record was last checked -- these are stored from the last manual/scheduled check, not recomputed live for whichever period is currently selected elsewhere in the app. */
+  checkedAt?: string;
 }
 
 /** Replaces the whole table with the latest check's findings (see geoMismatch.ts). */
@@ -324,5 +326,6 @@ export async function getGeoMismatches(): Promise<GeoMismatchRecord[]> {
     unexpectedOrganicShare: r.unexpected_organic_share,
     unexpectedDirectShare: r.unexpected_direct_share,
     actionPlan: r.action_plan,
+    checkedAt: r.checked_at instanceof Date ? r.checked_at.toISOString() : r.checked_at,
   }));
 }

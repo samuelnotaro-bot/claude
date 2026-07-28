@@ -26,6 +26,12 @@ export const config = {
   // which then shows up as silent sync failures (i.e. more data gaps).
   // Lower this to match your actual plan if you still see 429s in the logs.
   piwikMaxRequestsPerMinute: Number(env("PIWIK_MAX_REQUESTS_PER_MINUTE", "60")),
+  // How many days back Piwik Pro actually keeps queryable data on this
+  // account/plan (confirmed by the account owner -- not discoverable via the
+  // API itself). Dates older than this will NEVER succeed no matter how many
+  // times a gap-fill retries them, so this bounds gap-fill's scan and lets the
+  // UI tell "will never be available" apart from "not synced yet, retry".
+  piwikDataRetentionDays: Number(env("PIWIK_DATA_RETENTION_DAYS", "60")),
   fetchCron: env("FETCH_CRON", "0 6 * * *"),
   synthesisCron: env("SYNTHESIS_CRON", "0 7 * * 1"),
   dashboard: {

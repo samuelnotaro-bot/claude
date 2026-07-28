@@ -109,12 +109,18 @@ export interface Overview extends KpiSet {
   historyOk: boolean;
   /** Earliest date with any synced data at all, or null if there's no data yet. */
   earliestDataDate: string | null;
+  /** True when historyOk is false AND the comparison period reaches further back than Piwik Pro's own data retention -- comblage impossible, not just "not synced yet". */
+  retentionLimited: boolean;
+  /** Oldest date Piwik Pro can still return data for (today - PIWIK_DATA_RETENTION_DAYS). */
+  retentionFloorDate: string;
   siteCount: number;
   series: DayPoint[];
   /** Days excluded from the KPIs above because they were flagged as a traffic-flood anomaly. */
   excludedAnomalyDays: number;
-  /** Days with no synced snapshot at all in this period (sync gap) -- totals below likely undercount real Piwik Pro numbers by this much. */
+  /** Days with no synced snapshot at all in this period -- totals below likely undercount real Piwik Pro numbers by this much. Includes both fixable sync gaps and permanently out-of-retention days, see missingDaysOutOfRetention. */
   missingDays: number;
+  /** Of missingDays, how many are older than Piwik Pro's data retention window -- these will NEVER be filled (not a sync gap), see dataQualityNote. */
+  missingDaysOutOfRetention: number;
   findings: Finding[];
   /** Synthesis bullets generated on the fly for this exact period (distinct from the cron-generated weekly synthesis_history log, see the Synthèses tab). */
   synthesisBullets: string[];
@@ -126,6 +132,7 @@ export interface SiteSummary extends KpiSet {
   region: string;
   excludedAnomalyDays: number;
   missingDays: number;
+  missingDaysOutOfRetention: number;
   findings: Finding[];
 }
 
@@ -134,6 +141,7 @@ export interface RegionSummary extends KpiSet {
   siteCount: number;
   excludedAnomalyDays: number;
   missingDays: number;
+  missingDaysOutOfRetention: number;
   findings: Finding[];
 }
 
@@ -144,6 +152,21 @@ export interface Synthesis {
   periodTo: string;
   bullets: string[];
   highlights: Record<string, unknown>;
+}
+
+export interface PeriodSynthesis {
+  periodFrom: string;
+  periodTo: string;
+  compare: "previous_period" | "previous_year";
+  comparisonFrom: string;
+  comparisonTo: string;
+  historyOk: boolean;
+  retentionLimited: boolean;
+  retentionFloorDate: string;
+  earliestDataDate: string | null;
+  /** Findings across every site, every region AND global for this period, ranked by impact -- unlike Overview's findings (global scope only). */
+  findings: Finding[];
+  bullets: string[];
 }
 
 export interface BackfillStatus {
@@ -167,6 +190,8 @@ export interface GeoMismatch {
   unexpectedOrganicShare: number;
   unexpectedDirectShare: number;
   actionPlan: string;
+  /** When this record was last checked (last manual/scheduled check -- not recomputed live for the currently-selected period). */
+  checkedAt?: string;
 }
 
 export interface BotAnomalyEntry {
@@ -213,6 +238,7 @@ export interface GapFillResult {
   daysFilled: number;
   daysRemaining: number;
   daysFailed: number;
+  daysOutOfRetention: number;
 }
 
 export interface OptionalMetricsDiagnostics {
@@ -229,6 +255,7 @@ export const api = {
   sitesSummary: (periodQuery: string) => get<SiteSummary[]>(`/api/sites/summary?${periodQuery}`),
   regions: (periodQuery: string) => get<RegionSummary[]>(`/api/regions?${periodQuery}`),
   overview: (periodQuery: string) => get<Overview>(`/api/overview?${periodQuery}`),
+  periodSynthesis: (periodQuery: string) => get<PeriodSynthesis>(`/api/synthesis/period?${periodQuery}`),
   series: (scope: "site" | "region" | "global", id: string | undefined, periodQuery: string) =>
     get<DayPoint[]>(`/api/series?scope=${scope}${id ? `&id=${encodeURIComponent(id)}` : ""}&${periodQuery}`),
   findings: (limit = 20) => get<Finding[]>(`/api/findings?limit=${limit}`),

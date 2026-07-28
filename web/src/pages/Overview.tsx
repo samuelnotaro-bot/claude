@@ -6,6 +6,7 @@ import { ChannelMixChart } from "../components/ChannelMixChart";
 import { FindingsList } from "../components/FindingsList";
 import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
+import { HistoryWarningBanner } from "../components/HistoryWarningBanner";
 
 export function Overview() {
   const { queryParams, compare, from, to } = usePeriod();
@@ -28,12 +29,14 @@ export function Overview() {
     try {
       const result = await api.fillGaps();
       const parts: string[] = [];
-      if (result.daysFilled === 0 && result.daysFailed === 0) {
+      if (result.daysFilled === 0 && result.daysFailed === 0 && result.daysOutOfRetention === 0) {
         parts.push("Aucun trou détecté dans l'historique.");
       } else {
         if (result.daysFilled > 0) parts.push(`${result.daysFilled} jour(s) comblé(s)`);
         if (result.daysFailed > 0) parts.push(`${result.daysFailed} échec(s) Piwik Pro (relancez pour réessayer)`);
         if (result.daysRemaining > 0) parts.push(`${result.daysRemaining} pas encore tenté(s), relancez`);
+        if (result.daysOutOfRetention > 0)
+          parts.push(`${result.daysOutOfRetention} jour(s) hors de la période de rétention Piwik Pro -- ne seront jamais disponibles`);
       }
       setGapMessage(parts.join(" · ") + ".");
       api.overview(queryParams).then(setOverview);
@@ -49,7 +52,7 @@ export function Overview() {
 
   const deltaLabel = periodComparisonLabel(compare);
   const periodLabel = from === to ? from : `${from} → ${to}`;
-  const qualityNote = dataQualityNote(overview.excludedAnomalyDays, overview.missingDays);
+  const qualityNote = dataQualityNote(overview.excludedAnomalyDays, overview.missingDays, overview.missingDaysOutOfRetention);
 
   return (
     <div>
@@ -65,15 +68,13 @@ export function Overview() {
         </div>
       </div>
 
-      {!overview.historyOk && (
-        <p className="data-quality-banner">
-          ⚠ Comparaison indisponible pour cette sélection : il faudrait un historique remontant au{" "}
-          {overview.comparisonFrom}, mais les données synchronisées commencent seulement le{" "}
-          {overview.earliestDataDate ?? "?"}. Ce n'est pas une absence de variation -- choisissez une période plus courte,
-          ou "à la période précédente" plutôt qu'"à l'année précédente" si votre historique Piwik Pro ne remonte pas
-          aussi loin.
-        </p>
-      )}
+      <HistoryWarningBanner
+        historyOk={overview.historyOk}
+        retentionLimited={overview.retentionLimited}
+        comparisonFrom={overview.comparisonFrom}
+        earliestDataDate={overview.earliestDataDate}
+        retentionFloorDate={overview.retentionFloorDate}
+      />
 
       {qualityNote && <p className="data-quality-banner">⚠ {qualityNote}, sur tous les chiffres ci-dessous.</p>}
 

@@ -2,6 +2,7 @@ import { getSites, upsertSnapshot, getEarliestSnapshotDate, getSnapshotDatesBySi
 import { fetchDailyMetrics } from "./metrics.js";
 import { clearCache } from "./cache.js";
 import { addDaysIso } from "./period.js";
+import { config } from "./config.js";
 
 // Bounded concurrency across sites for a given day -- meaningfully faster than
 // fully sequential against the real Piwik Pro API, while staying conservative
@@ -66,6 +67,14 @@ export interface GapFillResult {
   daysRemaining: number;
   /** Attempts that failed this run (transient Piwik Pro error) -- stay "missing" and get retried on the next run, see syncSiteDate. */
   daysFailed: number;
+  /**
+   * Missing (site, day) pairs older than PIWIK_DATA_RETENTION_DAYS -- Piwik
+   * Pro no longer has this data at all, so retrying them would just waste
+   * rate-limited API budget forever. Not attempted, not counted in
+   * daysRemaining: these will never fill, and the UI should say so instead of
+   * implying "not yet" like it does for daysRemaining.
+   */
+  daysOutOfRetention: number;
 }
 
 /**
@@ -87,12 +96,15 @@ export interface GapFillResult {
  * waiting for the next wake-up.
  */
 export async function backfillGaps(): Promise<GapFillResult> {
-  const empty: GapFillResult = { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0, daysFailed: 0 };
+  const empty: GapFillResult = { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0, daysFailed: 0, daysOutOfRetention: 0 };
   const [sites, earliest] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
   if (sites.length === 0 || !earliest) return empty;
 
-  const yesterday = addDaysIso(new Date().toISOString().slice(0, 10), -1);
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = addDaysIso(today, -1);
   if (earliest > yesterday) return empty;
+
+  const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
 
   const datesBySite = await getSnapshotDatesBySite(
     sites.map((s) => s.id),
@@ -102,11 +114,19 @@ export async function backfillGaps(): Promise<GapFillResult> {
 
   const missingBySite = new Map<string, string[]>();
   let totalMissing = 0;
+  let outOfRetention = 0;
   for (const site of sites) {
     const present = datesBySite.get(site.id) ?? new Set<string>();
     const missing: string[] = [];
     for (let d = earliest; d <= yesterday; d = addDaysIso(d, 1)) {
-      if (!present.has(d)) missing.push(d);
+      if (present.has(d)) continue;
+      if (d < retentionFloor) {
+        // Piwik Pro will never return this date again -- don't attempt it,
+        // don't count it as "remaining" (that implies it just needs a retry).
+        outOfRetention++;
+        continue;
+      }
+      missing.push(d);
     }
     if (missing.length > 0) {
       missingBySite.set(site.id, missing);
@@ -114,9 +134,9 @@ export async function backfillGaps(): Promise<GapFillResult> {
     }
   }
 
-  if (totalMissing === 0) return empty;
+  if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention };
 
-  console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
+  console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) within the ${config.piwikDataRetentionDays}-day retention window (+${outOfRetention} unfillable, out of retention); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
 
   let filled = 0;
   let failed = 0;
@@ -135,6 +155,6 @@ export async function backfillGaps(): Promise<GapFillResult> {
 
   if (filled > 0) clearCache();
   const remaining = totalMissing - filled - failed;
-  console.log(`[sync] gap fill done: ${filled} day(s) filled, ${failed} failed (will retry), ${remaining} not yet attempted.`);
-  return { sitesWithGaps: missingBySite.size, daysFilled: filled, daysRemaining: remaining, daysFailed: failed };
+  console.log(`[sync] gap fill done: ${filled} day(s) filled, ${failed} failed (will retry), ${remaining} not yet attempted, ${outOfRetention} out of retention (never fillable).`);
+  return { sitesWithGaps: missingBySite.size, daysFilled: filled, daysRemaining: remaining, daysFailed: failed, daysOutOfRetention: outOfRetention };
 }
