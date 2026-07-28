@@ -24,6 +24,16 @@ export interface DailySiteMetrics {
   supportConversions: number;
   /** File downloads (Resource Center, datasheets, ...), a dedicated Piwik Pro metric. */
   downloads: number;
+  /** Sessions whose `source` matches a known AI assistant domain (see aiReferrers.ts). */
+  aiReferralSessions: number;
+  /** Single-pageview ("bounced") sessions on the organic channel -- a bot-trend proxy signal. */
+  organicBounces: number;
+  /** Single-pageview ("bounced") sessions on the direct channel -- a bot-trend proxy signal. */
+  directBounces: number;
+  /** Google Search Console clicks for this site/day, via Piwik Pro's GSC integration (0 if not configured for this site). */
+  searchConsoleClicks: number;
+  /** Google Search Console impressions for this site/day, via Piwik Pro's GSC integration (0 if not configured for this site). */
+  searchConsoleImpressions: number;
 }
 
 export interface CountryBreakdown {

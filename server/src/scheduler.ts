@@ -4,6 +4,7 @@ import { syncSiteRegistry } from "./siteRegistry.js";
 import { syncDay } from "./sync.js";
 import { runSynthesis } from "./analysis.js";
 import { checkGeoMismatches } from "./geoMismatch.js";
+import { clearCache } from "./cache.js";
 
 export function startScheduler(): void {
   cron.schedule(config.fetchCron, async () => {
@@ -13,6 +14,7 @@ export function startScheduler(): void {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       await syncDay(yesterday.toISOString().slice(0, 10));
+      clearCache();
       console.log("[scheduler] daily fetch done.");
     } catch (err) {
       console.error("[scheduler] daily fetch failed:", err);
@@ -34,6 +36,7 @@ export function startScheduler(): void {
     } catch (err) {
       console.error("[scheduler] geo mismatch check failed:", err);
     }
+    clearCache();
   });
 
   console.log(`[scheduler] started (fetch="${config.fetchCron}", synthesis="${config.synthesisCron}")`);

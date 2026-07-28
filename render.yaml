@@ -3,14 +3,21 @@ services:
     name: mkweb-piwik-pro-analyzer-v1
     runtime: node
     plan: free
-    # The TypeScript/Vite build runs here, in the startCommand, rather than in
-    # buildCommand: Render's deploy artifact upload strips anything matching
-    # .gitignore (including dist/, which is rightly gitignored generated output),
-    # so a dist/ produced during buildCommand never survives into the running
-    # instance. Building right before `node` runs guarantees dist/ exists where
-    # and when it's needed.
+    # The TypeScript/Vite build runs as part of the start command (via
+    # server/start.sh's self-heal check), not in buildCommand: Render's deploy
+    # artifact upload strips anything matching .gitignore (including dist/,
+    # which is rightly gitignored generated output), so a dist/ produced during
+    # buildCommand never survives into the running instance.
+    #
+    # start.sh only rebuilds when dist/ (server or web) is actually missing --
+    # it does NOT rebuild unconditionally. This matters because Render's free
+    # plan spins the service down after inactivity and respins it on the next
+    # request, re-running startCommand against the *same* container filesystem
+    # (nothing is wiped). Forcing a full `npm run build` here unconditionally
+    # (as a previous version of this file did) meant every wake-from-sleep paid
+    # for a full reinstall+rebuild instead of starting in a couple of seconds.
     buildCommand: npm install
-    startCommand: npm run build && npm run start --workspace=server
+    startCommand: npm run start --workspace=server
     healthCheckPath: /api/health
     envVars:
       - key: PIWIK_MODE

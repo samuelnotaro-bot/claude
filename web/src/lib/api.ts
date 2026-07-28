@@ -33,50 +33,66 @@ export interface DayPoint {
   conversionRate: number;
   bounceRate: number;
   channels: Record<string, number>;
+  aiReferralSessions: number;
+  organicBounces: number;
+  directBounces: number;
+  searchConsoleClicks: number;
+  searchConsoleImpressions: number;
   /** Flagged as a traffic-flood anomaly (see server anomaly.ts). Only set on /api/series (raw/detail view). */
   isAnomaly?: boolean;
+  isMissing?: boolean;
 }
 
 export type PeriodDays = 7 | 30 | 90 | 365;
 
-export interface Overview {
-  periodDays: PeriodDays;
-  siteCount: number;
-  sessionsLast7d: number;
+/** KPI fields shared by /api/overview, /api/regions and /api/sites/summary (see server/src/routes/api.ts withChanges()). */
+export interface KpiSet {
+  sessions: number;
   sessionsChangePct: number | null;
-  conversionsLast7d: number;
+  conversions: number;
   conversionsChangePct: number | null;
-  conversionRateLast7d: number;
+  conversionRate: number;
   conversionRateChangePct: number | null;
-  rfqLast7d: number;
+  rfq: number;
   rfqChangePct: number | null;
-  supportLast7d: number;
+  support: number;
   supportChangePct: number | null;
-  downloadsLast7d: number;
+  downloads: number;
   downloadsChangePct: number | null;
+  organicSessions: number;
+  organicSessionsChangePct: number | null;
+  aiReferralSessions: number;
+  aiReferralSessionsChangePct: number | null;
+  lowEngagementSessions: number;
+  lowEngagementShare: number;
+  lowEngagementShareChangePct: number | null;
+  searchConsoleClicks: number;
+  searchConsoleClicksChangePct: number | null;
+  searchConsoleImpressions: number;
+}
+
+export interface Overview extends KpiSet {
+  periodFrom: string;
+  periodTo: string;
+  compare: "previous_period" | "previous_year";
+  comparisonFrom: string;
+  comparisonTo: string;
+  siteCount: number;
   series: DayPoint[];
   /** Days excluded from the KPIs above because they were flagged as a traffic-flood anomaly. */
   excludedAnomalyDays: number;
 }
 
-export interface SiteSummary {
+export interface SiteSummary extends KpiSet {
   id: string;
   name: string;
   region: string;
-  sessionsLast7d: number;
-  sessionsChangePct: number | null;
-  conversionsLast7d: number;
-  conversionRateLast7d: number;
   excludedAnomalyDays: number;
 }
 
-export interface RegionSummary {
+export interface RegionSummary extends KpiSet {
   region: string;
   siteCount: number;
-  sessionsLast7d: number;
-  sessionsChangePct: number | null;
-  conversionsLast7d: number;
-  conversionRateLast7d: number;
   excludedAnomalyDays: number;
 }
 
@@ -84,7 +100,7 @@ export interface Finding {
   scope: "site" | "continent" | "global";
   entityId: string;
   entityName: string;
-  metric: "sessions" | "conversionRate" | "goalConversions" | "channelMix";
+  metric: "sessions" | "conversionRate" | "goalConversions" | "channelMix" | "organicSessions" | "aiReferralSessions" | "lowEngagementShare" | "searchConsoleClicks";
   label: string;
   direction: "up" | "down";
   changePct: number | null;
@@ -121,21 +137,47 @@ export interface GeoMismatch {
   topUnexpectedCountry: string;
   topUnexpectedShare: number;
   totalSessions: number;
+  unexpectedOrganicShare: number;
+  unexpectedDirectShare: number;
+  actionPlan: string;
+}
+
+export interface BotAnomalyEntry {
+  siteId: string;
+  siteName: string;
+  region: string;
+  date: string;
+  channels: ("organic" | "direct")[];
+  sessions: number;
+  baselineSessions: number;
+  excessSessions: number;
+}
+
+export interface BotSignal {
+  periodFrom: string;
+  periodTo: string;
+  totalSessions: number;
+  totalExcessSessions: number;
+  estimatedBotSharePct: number | null;
+  anomalies: BotAnomalyEntry[];
+  lowEngagementShare: number;
+  lowEngagementShareChangePct: number | null;
 }
 
 export const api = {
   sites: () => get<Site[]>("/api/sites"),
-  sitesSummary: (days: PeriodDays = 7) => get<SiteSummary[]>(`/api/sites/summary?days=${days}`),
-  regions: (days: PeriodDays = 7) => get<RegionSummary[]>(`/api/regions?days=${days}`),
-  overview: (days: PeriodDays = 7) => get<Overview>(`/api/overview?days=${days}`),
-  series: (scope: "site" | "region" | "global", id?: string, days = 60) =>
-    get<DayPoint[]>(`/api/series?scope=${scope}${id ? `&id=${encodeURIComponent(id)}` : ""}&days=${days}`),
+  sitesSummary: (periodQuery: string) => get<SiteSummary[]>(`/api/sites/summary?${periodQuery}`),
+  regions: (periodQuery: string) => get<RegionSummary[]>(`/api/regions?${periodQuery}`),
+  overview: (periodQuery: string) => get<Overview>(`/api/overview?${periodQuery}`),
+  series: (scope: "site" | "region" | "global", id: string | undefined, periodQuery: string) =>
+    get<DayPoint[]>(`/api/series?scope=${scope}${id ? `&id=${encodeURIComponent(id)}` : ""}&${periodQuery}`),
   findings: (limit = 20) => get<Finding[]>(`/api/findings?limit=${limit}`),
   latestSynthesis: () => get<Synthesis | null>("/api/synthesis/latest"),
   synthesisHistory: (limit = 20) => get<Synthesis[]>(`/api/synthesis/history?limit=${limit}`),
   generateSynthesis: () => post<Synthesis | null>("/api/synthesis/generate"),
   geoMismatches: () => get<GeoMismatch[]>("/api/geo-mismatches"),
   checkGeoMismatches: () => post<GeoMismatch[]>("/api/geo-mismatches/check"),
+  bots: (periodQuery: string) => get<BotSignal>(`/api/bots?${periodQuery}`),
   health: () => get<{ ok: boolean; mode: string }>("/api/health"),
   backfillStatus: () => get<BackfillStatus>("/api/backfill/status"),
 };

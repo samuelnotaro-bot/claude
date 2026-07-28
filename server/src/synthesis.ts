@@ -60,6 +60,34 @@ function bulletForFinding(f: Finding, siblingSessionsFinding?: Finding): string 
     return `Volume de conversions en hausse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours, bon signal à consolider (retargeting, fidélisation).`;
   }
 
+  if (f.metric === "organicSessions") {
+    if (f.direction === "down") {
+      return `Trafic organique en baisse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours → vérifier Search Console (couverture, positions), les modifications techniques récentes (robots.txt, redirections) et une éventuelle pénalité algorithmique.`;
+    }
+    return `Trafic organique en hausse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours → identifier les pages/mots-clés moteurs de cette croissance et capitaliser dessus (contenu associé, maillage interne).`;
+  }
+
+  if (f.metric === "aiReferralSessions") {
+    if (f.direction === "down") {
+      return `Trafic référé par des assistants IA en baisse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours → signal faible, à surveiller sans action immédiate.`;
+    }
+    return `Trafic référé par des assistants IA en hausse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours → vérifier que le contenu cité par ces assistants est à jour et correctement structuré (GEO : réponses claires, données structurées).`;
+  }
+
+  if (f.metric === "lowEngagementShare") {
+    if (f.direction === "up") {
+      return `Part de trafic à faible engagement (organique/direct, signal bot) en hausse sur ${who} : ${pts(f.changePct ?? 0)} → croiser avec l'onglet Bots pour confirmer une vague de trafic non-humain avant de tirer une conclusion business sur le trafic/la conversion.`;
+    }
+    return `Part de trafic à faible engagement (signal bot) en baisse sur ${who} : ${pts(f.changePct ?? 0)}, bon signal de qualité de trafic.`;
+  }
+
+  if (f.metric === "searchConsoleClicks") {
+    if (f.direction === "down") {
+      return `Clics Search Console en baisse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours → vérifier les positions moyennes et le taux de clic (CTR) par requête dans Search Console.`;
+    }
+    return `Clics Search Console en hausse sur ${who} : ${pct(f.changePct ?? 0)} sur 7 jours → bon signal SEO, identifier les requêtes/pages en tête de la croissance.`;
+  }
+
   // channelMix
   const channel = CHANNEL_LABELS[f.detail ?? "other"] ?? f.detail ?? "un canal";
   if (f.direction === "up") {

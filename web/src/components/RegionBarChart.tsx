@@ -13,7 +13,7 @@ const SERIES_COLORS = [
 ];
 
 export function RegionBarChart({ data }: { data: RegionSummary[] }) {
-  const sorted = [...data].sort((a, b) => b.sessionsLast7d - a.sessionsLast7d);
+  const sorted = [...data].sort((a, b) => b.sessions - a.sessions);
   return (
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={sorted} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
@@ -38,9 +38,9 @@ export function RegionBarChart({ data }: { data: RegionSummary[] }) {
             borderRadius: 8,
             fontSize: 12,
           }}
-          formatter={(value: number) => [formatCompactNumber(value), "Sessions (7j)"]}
+          formatter={(value: number) => [formatCompactNumber(value), "Sessions"]}
         />
-        <Bar dataKey="sessionsLast7d" radius={[4, 4, 0, 0]} maxBarSize={40}>
+        <Bar dataKey="sessions" radius={[4, 4, 0, 0]} maxBarSize={40}>
           {sorted.map((_, i) => (
             <Cell key={i} fill={SERIES_COLORS[i % SERIES_COLORS.length]} />
           ))}

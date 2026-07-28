@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import type { PiwikApp, DailySiteMetrics, CountryBreakdown, Channel } from "./types.js";
 import { categorizeGoal } from "../goalCategories.js";
+import { isAiReferrerSource } from "../aiReferrers.js";
 
 /**
  * Thin client for the Piwik Pro REST APIs (Management API v2 + Analytics Query API v1).
@@ -27,6 +28,15 @@ const COLUMN_IDS = {
   countryDimension: "location_country_name",
   goalDimension: "goal_id",
   downloads: "downloads",
+  sourceDimension: "source",
+  bounces: "bounces",
+  // Google Search Console integration columns -- documented at
+  // https://developers.piwik.pro/reference/google-search-console-metrics-dimensions.
+  // Only populated for sites where the GSC integration is configured in Piwik
+  // Pro (Settings > Integrations); queried defensively (see getDailyMetrics)
+  // so a site without it configured doesn't break the rest of that site's sync.
+  searchConsoleClicks: "search_engine_clicks",
+  searchConsoleImpressions: "search_engine_impressions",
 };
 
 // Real `medium` values observed on this organization's traffic; anything else
@@ -221,6 +231,65 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     columns: [{ column_id: COLUMN_IDS.downloads }],
   });
 
+  // AI-assistant referral traffic (see aiReferrers.ts): sum sessions whose
+  // `source` matches a known AI domain, regardless of medium.
+  let aiReferralSessions = 0;
+  try {
+    const sourceRows = await queryAnalytics({
+      website_id: siteId,
+      date_from: date,
+      date_to: date,
+      columns: [{ column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
+    });
+    for (const row of sourceRows) {
+      const value = row[COLUMN_IDS.sourceDimension];
+      const source = String(Array.isArray(value) ? value[1] ?? value[0] : value ?? "");
+      if (source && isAiReferrerSource(source)) {
+        aiReferralSessions += Number(row[COLUMN_IDS.sessions] ?? 0);
+      }
+    }
+  } catch (err) {
+    console.warn(`[piwik] source breakdown query failed for ${siteId}/${date}, aiReferralSessions=0:`, err);
+  }
+
+  // Bot-trend proxy: single-pageview ("bounced") sessions on the organic/direct
+  // channels -- real engagement is rare on floods of near-zero-interaction hits.
+  let organicBounces = 0;
+  let directBounces = 0;
+  try {
+    const bounceRows = await queryAnalytics({
+      website_id: siteId,
+      date_from: date,
+      date_to: date,
+      columns: [{ column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
+    });
+    for (const row of bounceRows) {
+      const label = String(row[COLUMN_IDS.channelDimension] ?? "");
+      const count = Number(row[COLUMN_IDS.bounces] ?? 0);
+      if (label === "organic") organicBounces += count;
+      else if (label === "direct") directBounces += count;
+    }
+  } catch (err) {
+    console.warn(`[piwik] bounces-by-medium query failed for ${siteId}/${date}, organic/directBounces=0:`, err);
+  }
+
+  // Google Search Console (see COLUMN_IDS comment): fails cleanly to 0 for any
+  // site that doesn't have the integration configured in Piwik Pro.
+  let searchConsoleClicks = 0;
+  let searchConsoleImpressions = 0;
+  try {
+    const [gscTotals] = await queryAnalytics({
+      website_id: siteId,
+      date_from: date,
+      date_to: date,
+      columns: [{ column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
+    });
+    searchConsoleClicks = Number(gscTotals?.[COLUMN_IDS.searchConsoleClicks] ?? 0);
+    searchConsoleImpressions = Number(gscTotals?.[COLUMN_IDS.searchConsoleImpressions] ?? 0);
+  } catch (err) {
+    console.warn(`[piwik] Search Console query failed for ${siteId}/${date} (integration not configured for this site?), =0:`, err);
+  }
+
   return {
     siteId,
     date,
@@ -234,6 +303,11 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     rfqConversions,
     supportConversions,
     downloads: Number(downloadsTotal?.[COLUMN_IDS.downloads] ?? 0),
+    aiReferralSessions,
+    organicBounces,
+    directBounces,
+    searchConsoleClicks,
+    searchConsoleImpressions,
   };
 }
 
@@ -256,4 +330,38 @@ export async function getCountryBreakdown(siteId: string, dateFrom: string, date
     })
     .filter((c) => c.country)
     .sort((a, b) => b.sessions - a.sessions);
+}
+
+export interface CountryChannelRow {
+  country: string;
+  channel: Channel;
+  sessions: number;
+}
+
+/**
+ * Country x channel sessions breakdown for a site over a date range. Used by
+ * geoMismatch.ts to tell whether an unexpected country's traffic is organic
+ * (SEO/indexing issue, or a bot/crawler wave misreading the site's geo-targeting)
+ * or direct (real visitors typing/bookmarking the URL -- e.g. a legitimate
+ * diaspora/expat audience), since the right follow-up action differs.
+ */
+export async function getCountryChannelBreakdown(siteId: string, dateFrom: string, dateTo: string): Promise<CountryChannelRow[]> {
+  const rows = await queryAnalytics({
+    website_id: siteId,
+    date_from: dateFrom,
+    date_to: dateTo,
+    columns: [{ column_id: COLUMN_IDS.countryDimension }, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.sessions }],
+  });
+  return rows
+    .map((r) => {
+      const countryValue = r[COLUMN_IDS.countryDimension];
+      const isoCode = Array.isArray(countryValue) ? countryValue[0] : countryValue;
+      const label = String(r[COLUMN_IDS.channelDimension] ?? "");
+      return {
+        country: String(isoCode ?? "").toUpperCase(),
+        channel: CHANNEL_MAP[label] ?? "other",
+        sessions: Number(r[COLUMN_IDS.sessions] ?? 0),
+      };
+    })
+    .filter((c) => c.country);
 }

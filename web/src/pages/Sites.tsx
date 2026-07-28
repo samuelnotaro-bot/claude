@@ -1,31 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type SiteSummary, type DayPoint } from "../lib/api";
+import { api, type SiteSummary, type DayPoint, type Finding } from "../lib/api";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
+import { KpiTile } from "../components/KpiTile";
+import { FindingsList } from "../components/FindingsList";
 import { formatCompactNumber, formatPct } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
-type SortKey = "name" | "region" | "sessionsLast7d" | "sessionsChangePct" | "conversionRateLast7d";
+type SortKey = "name" | "region" | "sessions" | "sessionsChangePct" | "conversionRate";
 
 export function Sites() {
-  const { days } = usePeriod();
+  const { queryParams, compare } = usePeriod();
   const [sites, setSites] = useState<SiteSummary[]>([]);
   const [selected, setSelected] = useState<SiteSummary | null>(null);
   const [series, setSeries] = useState<DayPoint[]>([]);
-  const [sortKey, setSortKey] = useState<SortKey>("sessionsLast7d");
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [sortKey, setSortKey] = useState<SortKey>("sessions");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   useEffect(() => {
-    api.sitesSummary(days).then((data) => {
+    api.sitesSummary(queryParams).then((data) => {
       setSites(data);
       setSelected((current) => (current && data.find((s) => s.id === current.id)) || data[0] || null);
     });
-  }, [days]);
+    api.findings(200).then(setFindings);
+  }, [queryParams]);
 
   useEffect(() => {
     if (!selected) return;
-    api.series("site", selected.id, 60).then(setSeries);
-  }, [selected]);
+    api.series("site", selected.id, queryParams).then(setSeries);
+  }, [selected, queryParams]);
 
   const sorted = useMemo(() => {
     const copy = [...sites];
@@ -46,19 +50,22 @@ export function Sites() {
     }
   }
 
+  const deltaLabel = periodComparisonLabel(compare);
+  const siteFindings = findings.filter((f) => f.entityId === selected?.id);
+
   return (
     <div>
       <div className="card">
-        <h2>Sites — {days} derniers jours</h2>
+        <h2>Sites</h2>
         <table className="data-table">
           <thead>
             <tr>
               <th onClick={() => toggleSort("name")}>Site</th>
               <th onClick={() => toggleSort("region")}>Région</th>
-              <th onClick={() => toggleSort("sessionsLast7d")}>Sessions ({days}j)</th>
-              <th onClick={() => toggleSort("sessionsChangePct")}>Δ {periodComparisonLabel(days)}</th>
-              <th onClick={() => toggleSort("conversionRateLast7d")}>Taux de conversion</th>
-              <th title={`Jours de pic trafic anormal exclus du calcul ci-dessus, sur les ${days} derniers jours`}>Anomalies</th>
+              <th onClick={() => toggleSort("sessions")}>Sessions</th>
+              <th onClick={() => toggleSort("sessionsChangePct")}>Δ {deltaLabel}</th>
+              <th onClick={() => toggleSort("conversionRate")}>Taux de conversion</th>
+              <th title="Jours de pic trafic anormal exclus du calcul ci-dessus">Anomalies</th>
             </tr>
           </thead>
           <tbody>
@@ -66,11 +73,11 @@ export function Sites() {
               <tr key={s.id} onClick={() => setSelected(s)} style={{ fontWeight: s.id === selected?.id ? 600 : 400 }}>
                 <td>{s.name}</td>
                 <td>{s.region}</td>
-                <td>{formatCompactNumber(s.sessionsLast7d)}</td>
+                <td>{formatCompactNumber(s.sessions)}</td>
                 <td className={s.sessionsChangePct !== null && s.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
                   {formatPct(s.sessionsChangePct)}
                 </td>
-                <td>{(s.conversionRateLast7d * 100).toFixed(2)}%</td>
+                <td>{(s.conversionRate * 100).toFixed(2)}%</td>
                 <td>{s.excludedAnomalyDays > 0 ? `${s.excludedAnomalyDays} exclu(s)` : "—"}</td>
               </tr>
             ))}
@@ -80,15 +87,32 @@ export function Sites() {
 
       {selected && (
         <>
+          <h3 className="section-title">SEO/GEO, signal bot & conversion — {selected.name}</h3>
+          <div className="kpi-grid">
+            <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selected.organicSessions)} deltaPct={selected.organicSessionsChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Trafic référé par IA" value={formatCompactNumber(selected.aiReferralSessions)} deltaPct={selected.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Clics Search Console" value={formatCompactNumber(selected.searchConsoleClicks)} deltaPct={selected.searchConsoleClicksChangePct} deltaLabel={deltaLabel} />
+            <KpiTile
+              label="Trafic à faible engagement (signal bot)"
+              value={`${(selected.lowEngagementShare * 100).toFixed(1)}%`}
+              deltaPct={selected.lowEngagementShareChangePct}
+              deltaIsGoodWhenUp={false}
+              deltaLabel={deltaLabel}
+            />
+            <KpiTile label="Demandes de devis" value={formatCompactNumber(selected.rfq)} deltaPct={selected.rfqChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Demandes de support" value={formatCompactNumber(selected.support)} deltaPct={selected.supportChangePct} deltaLabel={deltaLabel} />
+            <KpiTile label="Téléchargements" value={formatCompactNumber(selected.downloads)} deltaPct={selected.downloadsChangePct} deltaLabel={deltaLabel} />
+          </div>
+
           <div className="card">
-            <h2>Trafic — {selected.name} (60 derniers jours)</h2>
+            <h2>Trafic — {selected.name}</h2>
             <p className="chart-note">Point rouge = pic de trafic anormal détecté (exclu des KPIs ci-dessus, visible ici pour analyse).</p>
             <TrendChart data={series} lines={[{ dataKey: "sessions", label: "Sessions", color: "var(--series-1)" }]} markAnomalies />
           </div>
           <div className="card">
             <h2>Taux de conversion — {selected.name}</h2>
             <TrendChart
-              data={series.map((d) => ({ ...d, conversionRatePct: d.conversionRate * 100 }))}
+              data={series.map((d) => ({ ...d, conversionRatePct: (d.conversionRate as number) * 100 }))}
               lines={[{ dataKey: "conversionRatePct", label: "Taux de conversion (%)", color: "var(--series-6)" }]}
               valueFormatter={(n) => `${n.toFixed(1)}%`}
             />
@@ -96,6 +120,10 @@ export function Sites() {
           <div className="card">
             <h2>Canaux d'acquisition — {selected.name}</h2>
             <ChannelMixChart data={series} />
+          </div>
+          <div className="card">
+            <h2>Analyse & plan d'action — {selected.name}</h2>
+            <FindingsList findings={siteFindings} />
           </div>
         </>
       )}

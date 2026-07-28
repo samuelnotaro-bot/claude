@@ -6,6 +6,7 @@ import { runSynthesis } from "./analysis.js";
 import { dateRange } from "./metrics.js";
 import { checkGeoMismatches } from "./geoMismatch.js";
 import { startBackfillStatus, incrementBackfillDays, finishBackfillStatus } from "./backfillStatus.js";
+import { clearCache } from "./cache.js";
 
 // Synced first, before the rest of the configured history, so real KPIs show
 // up quickly on a fresh deploy instead of waiting for the full window --
@@ -56,6 +57,7 @@ export async function backfillAll(days = config.backfillDays): Promise<void> {
       await checkGeoMismatches();
     }
     finishBackfillStatus();
+    clearCache();
     console.log("[backfill] done.");
   } catch (err) {
     finishBackfillStatus(err instanceof Error ? err.message : String(err));

@@ -13,17 +13,34 @@ export interface DayPoint {
   rfqConversions: number;
   supportConversions: number;
   downloads: number;
+  aiReferralSessions: number;
+  organicBounces: number;
+  directBounces: number;
+  searchConsoleClicks: number;
+  searchConsoleImpressions: number;
   /** True when this day (or, for an aggregate point, at least one contributing site) was flagged as a traffic-flood anomaly. See anomaly.ts. */
   isAnomaly?: boolean;
+  /** True when this date has no underlying snapshot row at all (zero-filled -- see zeroFillDayPoints). Lets the UI/validity checks tell "genuinely zero traffic" apart from "no data collected that day". */
+  isMissing?: boolean;
 }
 
 export type Scope = "site" | "continent" | "global";
+
+export type FindingMetric =
+  | "sessions"
+  | "conversionRate"
+  | "goalConversions"
+  | "channelMix"
+  | "organicSessions"
+  | "aiReferralSessions"
+  | "lowEngagementShare"
+  | "searchConsoleClicks";
 
 export interface Finding {
   scope: Scope;
   entityId: string;
   entityName: string;
-  metric: "sessions" | "conversionRate" | "goalConversions" | "channelMix";
+  metric: FindingMetric;
   label: string; // human metric label, e.g. "trafic (sessions)"
   direction: "up" | "down";
   changePct: number | null; // week-over-week % change
@@ -33,11 +50,15 @@ export interface Finding {
   detail?: string; // extra context, e.g. which channel shifted
 }
 
-const METRIC_LABELS: Record<Finding["metric"], string> = {
+const METRIC_LABELS: Record<FindingMetric, string> = {
   sessions: "trafic (sessions)",
   conversionRate: "taux de conversion",
   goalConversions: "conversions",
   channelMix: "répartition des canaux d'acquisition",
+  organicSessions: "trafic organique (SEO)",
+  aiReferralSessions: "trafic référé par des IA",
+  lowEngagementShare: "part de trafic à faible engagement (signal bot)",
+  searchConsoleClicks: "clics Search Console",
 };
 
 export function toDayPoints(rows: SnapshotRow[], anomalousDates?: Set<string>): DayPoint[] {
@@ -53,8 +74,59 @@ export function toDayPoints(rows: SnapshotRow[], anomalousDates?: Set<string>): 
     rfqConversions: r.rfqConversions,
     supportConversions: r.supportConversions,
     downloads: r.downloads,
+    aiReferralSessions: r.aiReferralSessions,
+    organicBounces: r.organicBounces,
+    directBounces: r.directBounces,
+    searchConsoleClicks: r.searchConsoleClicks,
+    searchConsoleImpressions: r.searchConsoleImpressions,
     isAnomaly: anomalousDates?.has(r.date) ?? false,
   }));
+}
+
+function emptyDayPoint(date: string): DayPoint {
+  return {
+    date,
+    sessions: 0,
+    users: 0,
+    pageviews: 0,
+    goalConversions: 0,
+    conversionRate: 0,
+    bounceRate: 0,
+    channels: { organic: 0, direct: 0, referral: 0, paid: 0, social: 0, email: 0, other: 0 },
+    rfqConversions: 0,
+    supportConversions: 0,
+    downloads: 0,
+    aiReferralSessions: 0,
+    organicBounces: 0,
+    directBounces: 0,
+    searchConsoleClicks: 0,
+    searchConsoleImpressions: 0,
+    isAnomaly: false,
+    isMissing: true,
+  };
+}
+
+function addDaysIso(date: string, delta: number): string {
+  const d = new Date(date + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Fills any calendar day between `from` and `to` (inclusive) missing from
+ * `points` with a zero-valued point, so callers always get a continuous,
+ * fixed-length series to sum/compare regardless of sync gaps (e.g. a day the
+ * Render free-tier instance was asleep through its scheduled fetch -- see
+ * scheduler.ts / the boot-time catch-up sync in index.ts). Missing days are
+ * marked `isMissing` rather than silently blended in as "real zero traffic".
+ */
+export function zeroFillDayPoints(points: DayPoint[], from: string, to: string): DayPoint[] {
+  const byDate = new Map(points.map((p) => [p.date, p]));
+  const filled: DayPoint[] = [];
+  for (let d = from; d <= to; d = addDaysIso(d, 1)) {
+    filled.push(byDate.get(d) ?? emptyDayPoint(d));
+  }
+  return filled;
 }
 
 /**
@@ -80,6 +152,11 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
         rfqConversions: 0,
         supportConversions: 0,
         downloads: 0,
+        aiReferralSessions: 0,
+        organicBounces: 0,
+        directBounces: 0,
+        searchConsoleClicks: 0,
+        searchConsoleImpressions: 0,
         isAnomaly: false,
       };
       base.sessions += r.sessions;
@@ -89,6 +166,11 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
       base.rfqConversions += r.rfqConversions;
       base.supportConversions += r.supportConversions;
       base.downloads += r.downloads;
+      base.aiReferralSessions += r.aiReferralSessions;
+      base.organicBounces += r.organicBounces;
+      base.directBounces += r.directBounces;
+      base.searchConsoleClicks += r.searchConsoleClicks;
+      base.searchConsoleImpressions += r.searchConsoleImpressions;
       for (const ch of Object.keys(base.channels) as Channel[]) {
         base.channels[ch] += r.channels[ch];
       }
@@ -99,6 +181,44 @@ export function aggregateDayPoints(rowsBySite: SnapshotRow[][], anomalousDatesBy
   const points = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
   for (const p of points) p.conversionRate = p.sessions > 0 ? p.goalConversions / p.sessions : 0;
   return points;
+}
+
+/**
+ * Sums multiple already-zero-filled DayPoint series (one per site, all covering
+ * the same [from, to] range -- see zeroFillDayPoints) index-wise into one
+ * aggregate series. Distinct from aggregateDayPoints, which merges raw
+ * SnapshotRow[][] by date instead: this is the version to use once data has
+ * already been converted to DayPoint (see routes/api.ts's loadCleanSeriesBySite).
+ */
+export function aggregateDayPointSeries(seriesBySite: DayPoint[][]): DayPoint[] {
+  const length = seriesBySite[0]?.length ?? 0;
+  const result: DayPoint[] = [];
+  for (let i = 0; i < length; i++) {
+    const date = seriesBySite[0][i].date;
+    const base = emptyDayPoint(date);
+    base.isMissing = false;
+    for (const series of seriesBySite) {
+      const p = series[i];
+      if (!p) continue;
+      base.sessions += p.sessions;
+      base.users += p.users;
+      base.pageviews += p.pageviews;
+      base.goalConversions += p.goalConversions;
+      base.rfqConversions += p.rfqConversions;
+      base.supportConversions += p.supportConversions;
+      base.downloads += p.downloads;
+      base.aiReferralSessions += p.aiReferralSessions;
+      base.organicBounces += p.organicBounces;
+      base.directBounces += p.directBounces;
+      base.searchConsoleClicks += p.searchConsoleClicks;
+      base.searchConsoleImpressions += p.searchConsoleImpressions;
+      for (const ch of Object.keys(base.channels) as Channel[]) base.channels[ch] += p.channels[ch];
+      if (p.isAnomaly) base.isAnomaly = true;
+    }
+    base.conversionRate = base.sessions > 0 ? base.goalConversions / base.sessions : 0;
+    result.push(base);
+  }
+  return result;
 }
 
 function sum(points: DayPoint[], pick: (p: DayPoint) => number): number {
@@ -129,7 +249,7 @@ function lastNDays(points: DayPoint[], n: number, offset = 0): DayPoint[] {
 function detectMetricTrend(
   points: DayPoint[],
   pick: (p: DayPoint) => number,
-  metric: Finding["metric"],
+  metric: FindingMetric,
   scope: Scope,
   entityId: string,
   entityName: string,
@@ -215,6 +335,10 @@ function detectChannelMixShift(
   };
 }
 
+function lowEngagementShare(p: DayPoint): number {
+  return p.sessions > 0 ? (p.organicBounces + p.directBounces) / p.sessions : 0;
+}
+
 export function findTrendsForEntity(
   points: DayPoint[],
   scope: Scope,
@@ -226,7 +350,11 @@ export function findTrendsForEntity(
   const conv = detectMetricTrend(points, (p) => p.conversionRate, "conversionRate", scope, entityId, entityName, 0.15);
   const goals = detectMetricTrend(points, (p) => p.goalConversions, "goalConversions", scope, entityId, entityName, 0.15);
   const channelShift = detectChannelMixShift(points, scope, entityId, entityName);
-  for (const f of [traffic, conv, goals, channelShift]) if (f) findings.push(f);
+  const organic = detectMetricTrend(points, (p) => p.channels.organic, "organicSessions", scope, entityId, entityName, 0.15);
+  const aiReferral = detectMetricTrend(points, (p) => p.aiReferralSessions, "aiReferralSessions", scope, entityId, entityName, 0.2);
+  const botSignal = detectMetricTrend(points, lowEngagementShare, "lowEngagementShare", scope, entityId, entityName, 0.15);
+  const gscClicks = detectMetricTrend(points, (p) => p.searchConsoleClicks, "searchConsoleClicks", scope, entityId, entityName, 0.15);
+  for (const f of [traffic, conv, goals, channelShift, organic, aiReferral, botSignal, gscClicks]) if (f) findings.push(f);
   return findings;
 }
 

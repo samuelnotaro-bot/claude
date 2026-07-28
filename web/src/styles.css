@@ -15,6 +15,9 @@
   /* Identité de marque inspirée de socomec.fr (bleu institutionnel) -- volontairement fixe, ne change pas avec le thème clair/sombre. */
   --brand-navy: #00335c;
   --brand-blue: #0078bf;
+  --brand-yellow: #ffc72c;
+  /* Fond des boxes -- bleu très pâle façon socomec.fr, pas un simple gris neutre "SaaS". */
+  --card-tint: #eef2f8;
 
   --series-1: #0078bf; /* bleu socomec */
   --series-2: #eb6834; /* orange */
@@ -49,6 +52,7 @@
     --series-6: #008300;
     --series-7: #9085e9;
     --series-8: #e66767;
+    --card-tint: #16232f;
   }
 }
 :root[data-theme="dark"] {
@@ -73,6 +77,7 @@
   --series-6: #008300;
   --series-7: #9085e9;
   --series-8: #e66767;
+  --card-tint: #16232f;
 }
 
 * { box-sizing: border-box; }
@@ -160,6 +165,35 @@ body {
   color: var(--text-primary);
 }
 
+.period-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.custom-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.date-input {
+  font-family: inherit;
+  font-size: 13px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  padding: 5px 8px;
+  color-scheme: dark;
+}
+
+.range-sep {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+}
+
 .tabs {
   display: flex;
   gap: 4px;
@@ -186,25 +220,53 @@ body {
 }
 
 .card {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 18px 20px;
+  background: var(--card-tint);
+  border: none;
+  border-radius: 16px;
+  padding: 20px 22px;
 }
 
 .card + .card { margin-top: 16px; }
 
 .card h2 {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--brand-navy);
   margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 3px solid var(--brand-yellow);
+  display: inline-block;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .card h2 { color: #ffffff; }
+}
+:root[data-theme="dark"] .card h2 { color: #ffffff; }
 
 .card .card-subtitle {
   font-size: 12px;
   color: var(--text-muted);
   margin: -10px 0 14px;
 }
+
+.section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--brand-navy);
+  margin: 22px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 3px solid var(--brand-yellow);
+  display: inline-block;
+}
+
+.section-title:first-of-type {
+  margin-top: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .section-title { color: #ffffff; }
+}
+:root[data-theme="dark"] .section-title { color: #ffffff; }
 
 .kpi-grid {
   display: grid;
@@ -214,23 +276,30 @@ body {
 }
 
 .kpi-tile {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px 18px;
+  background: var(--card-tint);
+  border: none;
+  border-radius: 16px;
+  padding: 18px 20px;
 }
 
 .kpi-tile .kpi-label {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
 .kpi-tile .kpi-value {
   font-size: 28px;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--brand-navy);
   font-variant-numeric: proportional-nums;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .kpi-tile .kpi-value { color: #ffffff; }
+}
+:root[data-theme="dark"] .kpi-tile .kpi-value { color: #ffffff; }
 
 .kpi-tile .kpi-delta {
   font-size: 12px;
@@ -340,14 +409,21 @@ table.data-table tbody tr:hover {
 
 button.primary-btn {
   font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  background: var(--series-1);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--brand-navy);
   color: white;
   border: none;
-  border-radius: 8px;
-  padding: 8px 14px;
+  border-radius: 999px;
+  padding: 11px 22px;
   cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+button.primary-btn:hover:not(:disabled) {
+  background: var(--brand-blue);
 }
 
 button.primary-btn:disabled {
@@ -409,4 +485,25 @@ button.primary-btn:disabled {
 .finding-detail {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.geo-mismatch-item > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.geo-mismatch-split {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.geo-mismatch-plan {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 2px;
 }

@@ -58,8 +58,9 @@ export async function upsertSnapshot(m: DailySiteMetrics): Promise<void> {
     `INSERT INTO site_snapshots (
       site_id, date, sessions, users, pageviews, goal_conversions, bounce_rate, avg_session_duration_sec,
       channel_organic, channel_direct, channel_referral, channel_paid, channel_social, channel_email, channel_other,
-      rfq_conversions, support_conversions, downloads
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      rfq_conversions, support_conversions, downloads,
+      ai_referral_sessions, organic_bounces, direct_bounces, search_console_clicks, search_console_impressions
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
     ON CONFLICT (site_id, date) DO UPDATE SET
       sessions = excluded.sessions, users = excluded.users, pageviews = excluded.pageviews,
       goal_conversions = excluded.goal_conversions, bounce_rate = excluded.bounce_rate,
@@ -69,7 +70,10 @@ export async function upsertSnapshot(m: DailySiteMetrics): Promise<void> {
       channel_social = excluded.channel_social, channel_email = excluded.channel_email,
       channel_other = excluded.channel_other,
       rfq_conversions = excluded.rfq_conversions, support_conversions = excluded.support_conversions,
-      downloads = excluded.downloads`,
+      downloads = excluded.downloads,
+      ai_referral_sessions = excluded.ai_referral_sessions, organic_bounces = excluded.organic_bounces,
+      direct_bounces = excluded.direct_bounces, search_console_clicks = excluded.search_console_clicks,
+      search_console_impressions = excluded.search_console_impressions`,
     [
       m.siteId,
       m.date,
@@ -89,6 +93,11 @@ export async function upsertSnapshot(m: DailySiteMetrics): Promise<void> {
       m.rfqConversions,
       m.supportConversions,
       m.downloads,
+      m.aiReferralSessions,
+      m.organicBounces,
+      m.directBounces,
+      m.searchConsoleClicks,
+      m.searchConsoleImpressions,
     ]
   );
 }
@@ -106,6 +115,11 @@ export interface SnapshotRow {
   rfqConversions: number;
   supportConversions: number;
   downloads: number;
+  aiReferralSessions: number;
+  organicBounces: number;
+  directBounces: number;
+  searchConsoleClicks: number;
+  searchConsoleImpressions: number;
 }
 
 export async function getSnapshots(dateFrom: string, dateTo: string): Promise<SnapshotRow[]> {
@@ -119,6 +133,39 @@ export async function getSnapshotsForSite(siteId: string, dateFrom: string, date
     [siteId, dateFrom, dateTo]
   );
   return rows.map(rowToSnapshot);
+}
+
+/**
+ * Bulk equivalent of getSnapshotsForSite for many sites at once -- a single
+ * round trip instead of one query per site. Used by the aggregate endpoints
+ * (overview/regions/sites summary) which previously fired one query per site
+ * per request, the main source of slow page loads on a remote free-tier DB.
+ */
+export async function getSnapshotsForSites(siteIds: string[], dateFrom: string, dateTo: string): Promise<Map<string, SnapshotRow[]>> {
+  const byId = new Map<string, SnapshotRow[]>(siteIds.map((id) => [id, []]));
+  if (siteIds.length === 0) return byId;
+  const { rows } = await pool.query(
+    `SELECT * FROM site_snapshots WHERE site_id = ANY($1) AND date BETWEEN $2 AND $3 ORDER BY date`,
+    [siteIds, dateFrom, dateTo]
+  );
+  for (const r of rows) {
+    const snapshot = rowToSnapshot(r);
+    const list = byId.get(snapshot.siteId);
+    if (list) list.push(snapshot);
+  }
+  return byId;
+}
+
+/** Earliest date with any snapshot data at all -- used to tell "not enough history yet" apart from "data gap". */
+export async function getEarliestSnapshotDate(): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT MIN(date) AS earliest FROM site_snapshots`);
+  return rows[0]?.earliest ?? null;
+}
+
+/** Most recent date with any snapshot data at all -- used at boot to catch up on days missed while asleep (see index.ts). */
+export async function getLatestSnapshotDate(): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT MAX(date) AS latest FROM site_snapshots`);
+  return rows[0]?.latest ?? null;
 }
 
 function rowToSnapshot(r: any): SnapshotRow {
@@ -143,6 +190,11 @@ function rowToSnapshot(r: any): SnapshotRow {
     rfqConversions: r.rfq_conversions,
     supportConversions: r.support_conversions,
     downloads: r.downloads,
+    aiReferralSessions: r.ai_referral_sessions,
+    organicBounces: r.organic_bounces,
+    directBounces: r.direct_bounces,
+    searchConsoleClicks: r.search_console_clicks,
+    searchConsoleImpressions: r.search_console_impressions,
   };
 }
 
@@ -193,6 +245,12 @@ export interface GeoMismatchRecord {
   topUnexpectedCountry: string;
   topUnexpectedShare: number;
   totalSessions: number;
+  /** Of the unexpected country's sessions, the share coming from the organic channel. */
+  unexpectedOrganicShare: number;
+  /** Of the unexpected country's sessions, the share coming from the direct channel. */
+  unexpectedDirectShare: number;
+  /** Rule-based starter analysis / action plan for this finding (see geoMismatch.ts). */
+  actionPlan: string;
 }
 
 /** Replaces the whole table with the latest check's findings (see geoMismatch.ts). */
@@ -204,9 +262,21 @@ export async function saveGeoMismatches(mismatches: GeoMismatchRecord[]): Promis
     const checkedAt = new Date().toISOString();
     for (const m of mismatches) {
       await client.query(
-        `INSERT INTO geo_mismatches (site_id, site_name, expected_label, expected_share, top_unexpected_country, top_unexpected_share, total_sessions, checked_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [m.siteId, m.siteName, m.expectedLabel, m.expectedShare, m.topUnexpectedCountry, m.topUnexpectedShare, m.totalSessions, checkedAt]
+        `INSERT INTO geo_mismatches (site_id, site_name, expected_label, expected_share, top_unexpected_country, top_unexpected_share, total_sessions, checked_at, unexpected_organic_share, unexpected_direct_share, action_plan)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          m.siteId,
+          m.siteName,
+          m.expectedLabel,
+          m.expectedShare,
+          m.topUnexpectedCountry,
+          m.topUnexpectedShare,
+          m.totalSessions,
+          checkedAt,
+          m.unexpectedOrganicShare,
+          m.unexpectedDirectShare,
+          m.actionPlan,
+        ]
       );
     }
     await client.query("COMMIT");
@@ -228,5 +298,8 @@ export async function getGeoMismatches(): Promise<GeoMismatchRecord[]> {
     topUnexpectedCountry: r.top_unexpected_country,
     topUnexpectedShare: r.top_unexpected_share,
     totalSessions: r.total_sessions,
+    unexpectedOrganicShare: r.unexpected_organic_share,
+    unexpectedDirectShare: r.unexpected_direct_share,
+    actionPlan: r.action_plan,
   }));
 }

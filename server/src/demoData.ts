@@ -129,6 +129,30 @@ function distributeAcross(totalSessions: number, countries: string[], rng: () =>
     .sort((a, b) => b.sessions - a.sessions);
 }
 
+/**
+ * Country x channel breakdown for the geo-mismatch "direct vs organic" split
+ * (see geoMismatch.ts). Mirrors demoCountryBreakdown's country totals, split
+ * across channels -- the deliberate India-on-UK mismatch skews heavily organic
+ * to exercise the "likely SEO/bot" action-plan branch.
+ */
+export function demoCountryChannelBreakdown(siteId: string): { country: string; channel: Channel; sessions: number }[] {
+  const countries = demoCountryBreakdown(siteId);
+  const rng = mulberry32(hashStr(siteId + "geo-channel"));
+  const rows: { country: string; channel: Channel; sessions: number }[] = [];
+  for (const c of countries) {
+    const isMismatchCountry = siteId === "site-gb" && c.country === "IN";
+    const weights: Record<Channel, number> = isMismatchCountry
+      ? { organic: 0.62, direct: 0.08, referral: 0.14, paid: 0.06, social: 0.07, email: 0.02, other: 0.01 }
+      : CHANNEL_WEIGHTS;
+    const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
+    for (const [channel, weight] of Object.entries(weights) as [Channel, number][]) {
+      const sessions = Math.round(c.sessions * (weight / totalWeight) * (0.9 + rng() * 0.2));
+      if (sessions > 0) rows.push({ country: c.country, channel, sessions });
+    }
+  }
+  return rows;
+}
+
 const CHANNEL_WEIGHTS: Record<Channel, number> = {
   organic: 0.4,
   direct: 0.22,
@@ -196,6 +220,27 @@ export function generateDemoMetrics(siteId: string, date: string, today: Date): 
     ])
   ) as Record<Channel, number>;
 
+  // A small, steady share of AI-assistant referrals, growing slightly closer to
+  // today so the trend engine has a realistic "traffic from AI grows" signal.
+  const aiReferralShare = 0.01 + Math.max(0, (60 - daysAgo) / 60) * 0.03;
+  const aiReferralSessions = Math.round(sessions * aiReferralShare * (0.8 + rng() * 0.4));
+
+  // Bounce sessions on organic/direct -- the "site-us" demo site carries a
+  // deliberate bot-trend pattern (rising low-engagement share in recent days)
+  // so the Bots tab has something concrete to surface.
+  const botTrendSite = def.id === "site-us";
+  const baseBounceShare = 0.22 + rng() * 0.08;
+  const bounceShare = botTrendSite && daysAgo <= 14 ? baseBounceShare + (14 - daysAgo) * 0.02 : baseBounceShare;
+  const organicBounces = Math.round(channels.organic * Math.min(0.9, bounceShare));
+  const directBounces = Math.round(channels.direct * Math.min(0.9, bounceShare * 0.8));
+
+  // Search Console: only a subset of demo sites simulate having the GSC
+  // integration configured, matching the real-world "not every site has it
+  // set up in Piwik Pro" situation this app has to tolerate.
+  const hasSearchConsoleDemo = hashStr(def.id) % 3 !== 0;
+  const searchConsoleImpressions = hasSearchConsoleDemo ? Math.round(channels.organic * (18 + rng() * 12)) : 0;
+  const searchConsoleClicks = hasSearchConsoleDemo ? Math.round(searchConsoleImpressions * (0.02 + rng() * 0.03)) : 0;
+
   return {
     siteId,
     date,
@@ -209,5 +254,10 @@ export function generateDemoMetrics(siteId: string, date: string, today: Date): 
     rfqConversions,
     supportConversions,
     downloads,
+    aiReferralSessions,
+    organicBounces,
+    directBounces,
+    searchConsoleClicks,
+    searchConsoleImpressions,
   };
 }

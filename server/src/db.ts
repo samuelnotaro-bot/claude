@@ -43,14 +43,28 @@ export async function initSchema(): Promise<void> {
       rfq_conversions INTEGER NOT NULL DEFAULT 0,
       support_conversions INTEGER NOT NULL DEFAULT 0,
       downloads INTEGER NOT NULL DEFAULT 0,
+      ai_referral_sessions INTEGER NOT NULL DEFAULT 0,
+      organic_bounces INTEGER NOT NULL DEFAULT 0,
+      direct_bounces INTEGER NOT NULL DEFAULT 0,
+      search_console_clicks INTEGER NOT NULL DEFAULT 0,
+      search_console_impressions INTEGER NOT NULL DEFAULT 0,
       UNIQUE (site_id, date)
     );
     -- Progressive migration for databases created before these columns existed.
     ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS rfq_conversions INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS support_conversions INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS downloads INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS ai_referral_sessions INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS organic_bounces INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS direct_bounces INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS search_console_clicks INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS search_console_impressions INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS idx_snapshots_date ON site_snapshots (date);
     CREATE INDEX IF NOT EXISTS idx_snapshots_site ON site_snapshots (site_id);
+    -- Bulk per-period reads (overview/regions/sites/series) filter by date range
+    -- across every site in one query; this composite index keeps that a single
+    -- index scan instead of a full table scan as history grows.
+    CREATE INDEX IF NOT EXISTS idx_snapshots_site_date ON site_snapshots (site_id, date);
 
     CREATE TABLE IF NOT EXISTS synthesis_history (
       id SERIAL PRIMARY KEY,
@@ -71,7 +85,13 @@ export async function initSchema(): Promise<void> {
       top_unexpected_country TEXT NOT NULL,
       top_unexpected_share DOUBLE PRECISION NOT NULL,
       total_sessions INTEGER NOT NULL,
-      checked_at TEXT NOT NULL
+      checked_at TEXT NOT NULL,
+      unexpected_organic_share DOUBLE PRECISION NOT NULL DEFAULT 0,
+      unexpected_direct_share DOUBLE PRECISION NOT NULL DEFAULT 0,
+      action_plan TEXT NOT NULL DEFAULT ''
     );
+    ALTER TABLE geo_mismatches ADD COLUMN IF NOT EXISTS unexpected_organic_share DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE geo_mismatches ADD COLUMN IF NOT EXISTS unexpected_direct_share DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE geo_mismatches ADD COLUMN IF NOT EXISTS action_plan TEXT NOT NULL DEFAULT '';
   `);
 }
