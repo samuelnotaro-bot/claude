@@ -120,26 +120,40 @@ body {
   overflow: hidden;
   background-color: var(--brand-c1-700);
   /* Dégradé bleu uniquement (palette c1) -- pas de jaune, et pas de c1-900/800
-     (trop violacés) à gauche : on reste sur des tons bleus francs. La photo
-     n'est qu'une texture en fond, très fondue (le dégradé reste dominant à
-     ~85%) pour ne jamais nuire à la lisibilité du texte au-dessus. */
-  background-image:
-    linear-gradient(115deg, color-mix(in srgb, var(--brand-c1-700) 88%, transparent) 0%, color-mix(in srgb, var(--brand-c1-600) 85%, transparent) 40%, color-mix(in srgb, var(--brand-c1-400) 82%, transparent) 130%),
-    url("/header-banner-mkweb.png");
-  background-size: auto, cover;
-  background-position: 0 0, center 35%;
+     (trop violacés) à gauche : on reste sur des tons bleus francs. */
+  background-image: linear-gradient(115deg, color-mix(in srgb, var(--brand-c1-700) 92%, transparent) 0%, color-mix(in srgb, var(--brand-c1-600) 90%, transparent) 40%, color-mix(in srgb, var(--brand-c1-400) 88%, transparent) 130%);
   border-bottom: 3px solid var(--brand-c1-400);
 }
 
 /*
- * Texture "analytique" abstraite en surimpression du dégradé -- pas de photo
- * de stock (bureau/doudoune sans manches), un motif discret évoquant la data :
- * grille de points (nuage de données) + courbes de tendance en fond de page.
+ * Photo confinée à un panneau à droite (pas de pleine largeur) : hauteur
+ * calée sur celle du bandeau sans aucun recadrage vertical (zéro zoom, la
+ * scène complète reste visible), fondu progressif vers le dégradé bleu côté
+ * gauche via un masque plutôt qu'une coupe nette.
+ */
+.brand-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: url("/header-banner-mkweb.png");
+  background-size: auto 100%;
+  background-position: right center;
+  background-repeat: no-repeat;
+  opacity: 0.8;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 30%, black 68%, black 100%);
+  mask-image: linear-gradient(to right, transparent 0%, transparent 30%, black 68%, black 100%);
+}
+
+/*
+ * Texture "analytique" abstraite en surimpression -- grille de points (nuage
+ * de données) + courbes de tendance en fond de page.
  */
 .brand-bar::before {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 0;
   background-image:
     radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220'%3E%3Cpolyline points='0,170 80,145 160,158 240,105 320,122 400,68 480,90 560,45 600,58' fill='none' stroke='white' stroke-width='2' opacity='0.10'/%3E%3Cpolyline points='0,200 90,190 180,195 270,172 360,180 450,145 540,158 600,135' fill='none' stroke='white' stroke-width='1.5' opacity='0.07'/%3E%3C/svg%3E");
@@ -157,6 +171,7 @@ body {
 
 .brand-bar .app-header {
   position: relative;
+  z-index: 1;
   max-width: 1280px;
   margin: 0 auto;
   padding: 18px 20px;
@@ -379,26 +394,35 @@ body {
 
 .hero-banner {
   position: relative;
-  height: 92px;
-  border-radius: 16px;
+  height: 140px;
+  border-radius: 8px;
   overflow: hidden;
   margin-bottom: 16px;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background-color: var(--brand-c1-700);
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--brand-c1-800) 90%, transparent) 0%,
+    color-mix(in srgb, var(--brand-c1-600) 78%, transparent) 55%,
+    color-mix(in srgb, var(--brand-c1-500) 60%, transparent) 100%
+  );
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
-/* Dégradé bleu marque, assez opaque pour garder le texte lisible -- la photo reste une texture de fond, pas le sujet. */
-.hero-banner::before {
-  content: "";
+/*
+ * Photo confinée à un panneau à droite (pas de pleine largeur) : hauteur
+ * calée sur celle du bandeau sans aucun recadrage vertical (zéro zoom, la
+ * scène complète reste visible), fondu progressif vers le dégradé bleu côté
+ * gauche via un masque plutôt qu'une coupe nette.
+ */
+.hero-banner-photo {
   position: absolute;
   inset: 0;
-  background-image: linear-gradient(
-    100deg,
-    color-mix(in srgb, var(--brand-c1-800) 82%, transparent) 0%,
-    color-mix(in srgb, var(--brand-c1-600) 68%, transparent) 55%,
-    color-mix(in srgb, var(--brand-c1-400) 55%, transparent) 100%
-  );
+  z-index: 0;
+  background-size: auto 100%;
+  background-position: right center;
+  background-repeat: no-repeat;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 28%, black 62%, black 100%);
+  mask-image: linear-gradient(to right, transparent 0%, transparent 28%, black 62%, black 100%);
 }
 
 .hero-banner-caption {
@@ -417,7 +441,7 @@ body {
 }
 
 @media (max-width: 640px) {
-  .hero-banner { height: 72px; }
+  .hero-banner { height: 96px; }
   .hero-banner-caption { font-size: 11px; padding: 0 16px; }
 }
 
