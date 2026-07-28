@@ -60,7 +60,8 @@ export interface Finding {
     | "searchConsoleClicks"
     | "rfq"
     | "support"
-    | "downloads";
+    | "downloads"
+    | "organicSearchConsoleGap";
   label: string;
   direction: "up" | "down";
   changePct: number | null;

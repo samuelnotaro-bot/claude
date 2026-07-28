@@ -322,6 +322,29 @@ pas une analyse causale complète -- ça répond à "quel site" plutôt qu'à
 "quelle action précise sur ce site l'explique" (à investiguer manuellement à
 partir du site nommé).
 
+### Écart trafic organique / clics Search Console
+
+`checkOrganicSearchConsoleGap` (`server/src/routes/api.ts`) compare, pour
+chaque site/région/global, le trafic organique Piwik Pro aux clics Search
+Console de la même période : les deux devraient globalement se suivre
+puisqu'ils représentent tous les deux du trafic Google Search. Un écart d'au
+moins 4x dans un sens ou dans l'autre (site avec au moins 200 sessions
+organiques et 50 clics GSC, sinon trop peu de volume pour être fiable) est
+signalé comme finding avec une explication de départ différenciée selon le
+sens :
+- **organique très supérieur aux clics GSC** : trafic organique incluant
+  d'autres sources que Google (Bing, IA génératives), vague de bots/crawlers
+  classés à tort en organique (à croiser avec l'onglet Bots), ou délai de
+  traitement propre à Search Console.
+- **clics GSC très supérieurs à l'organique** : tracking Piwik Pro bloqué
+  chez une partie des visiteurs (bloqueurs de pub, refus de consentement),
+  rebond avant chargement du tag, ou un clic Search Console qui n'aboutit
+  jamais à une session (page lente, erreur serveur).
+
+**Limite connue** : le seuil de 4x est un point de départ raisonnable, pas un
+étalonnage validé sur des données réelles -- à ajuster (constante
+`ORGANIC_GSC_DISPARITY_RATIO`) si trop bruyant ou pas assez sensible en usage.
+
 ## Fiabilité de la synchronisation (résilience aux erreurs Piwik Pro)
 
 Avant ce correctif, une seule erreur API transitoire (limite de débit,

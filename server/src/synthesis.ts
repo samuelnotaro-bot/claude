@@ -109,6 +109,10 @@ function bulletForFinding(f: Finding, siblingSessionsFinding?: Finding): string 
     return `Clics Search Console en hausse sur ${who} : ${pct(f.changePct ?? 0)} sur la période → bon signal SEO, identifier les requêtes/pages en tête de la croissance.`;
   }
 
+  if (f.metric === "organicSearchConsoleGap") {
+    return `Écart organique / Search Console sur ${who} : ${f.explanation ?? "écart important entre trafic organique et clics Search Console, à investiguer."}`;
+  }
+
   // channelMix
   const channel = CHANNEL_LABELS[f.detail ?? "other"] ?? f.detail ?? "un canal";
   if (f.direction === "up") {

@@ -7,7 +7,24 @@ import { FindingsList } from "../components/FindingsList";
 import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA, dataQualityNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
-type SortKey = "name" | "region" | "sessions" | "sessionsChangePct" | "conversionRate";
+type SortKey =
+  | "name"
+  | "region"
+  | "sessions"
+  | "sessionsChangePct"
+  | "organicSessions"
+  | "aiReferralSessions"
+  | "searchConsoleClicks"
+  | "lowEngagementShare"
+  | "rfq"
+  | "support"
+  | "downloads"
+  | "conversionRate";
+
+const ANOMALY_HEADER_TITLE =
+  "Jours où un pic de trafic anormal (signature de bot -- voir l'onglet Bots) a été détecté sur ce site et exclu des totaux de cette ligne.";
+const MISSING_HEADER_TITLE =
+  "Jours sans synchronisation Piwik Pro pour ce site sur la période sélectionnée -- les totaux de cette ligne sous-estiment les vrais chiffres Piwik Pro d'autant.";
 
 export function Sites() {
   const { queryParams, compare } = usePeriod();
@@ -54,46 +71,66 @@ export function Sites() {
     <div>
       <div className="card">
         <h2>Sites</h2>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th onClick={() => toggleSort("name")}>Site</th>
-              <th onClick={() => toggleSort("region")}>Région</th>
-              <th onClick={() => toggleSort("sessions")}>Sessions</th>
-              <th onClick={() => toggleSort("sessionsChangePct")}>Δ {deltaLabel}</th>
-              <th onClick={() => toggleSort("conversionRate")}>Taux de conversion</th>
-              <th title="Jours de pic trafic anormal exclus des totaux, et jours de données manquantes (sync incomplète -- totaux sous-estimés d'autant)">Données</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((s) => (
-              <tr key={s.id} onClick={() => setSelected(s)} style={{ fontWeight: s.id === selected?.id ? 600 : 400 }}>
-                <td>{s.name}</td>
-                <td>{s.region}</td>
-                <td>{formatCompactNumber(s.sessions)}</td>
-                <td className={s.sessionsChangePct !== null && s.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
-                  {formatPct(s.sessionsChangePct)}
-                </td>
-                <td>{(s.conversionRate * 100).toFixed(2)}%</td>
-                <td>
-                  {s.excludedAnomalyDays === 0 && s.missingDays === 0
-                    ? "—"
-                    : [s.excludedAnomalyDays > 0 ? `${s.excludedAnomalyDays} exclu(s)` : null, s.missingDays > 0 ? `${s.missingDays} manquant(s)` : null]
-                        .filter(Boolean)
-                        .join(", ")}
-                </td>
+        <p className="chart-note">
+          Cliquez une ligne pour le détail. "Trafic IA" et "Signal bot" sont des estimations (pas des métriques natives Piwik
+          Pro) -- voir la section détaillée sous le tableau pour l'explication complète de chaque colonne.
+        </p>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th onClick={() => toggleSort("name")}>Site</th>
+                <th onClick={() => toggleSort("region")}>Région</th>
+                <th onClick={() => toggleSort("sessions")}>Sessions</th>
+                <th onClick={() => toggleSort("sessionsChangePct")}>Δ {deltaLabel}</th>
+                <th onClick={() => toggleSort("organicSessions")}>Trafic organique</th>
+                <th onClick={() => toggleSort("aiReferralSessions")} title="Estimation -- reclassement par domaine référent connu, pas une métrique native Piwik Pro.">
+                  Trafic IA
+                </th>
+                <th onClick={() => toggleSort("searchConsoleClicks")}>Clics Search Console</th>
+                <th onClick={() => toggleSort("lowEngagementShare")} title="Estimation -- sessions rebond organique/direct, proxy de trafic non-humain. Détail dans l'onglet Bots.">
+                  Signal bot
+                </th>
+                <th onClick={() => toggleSort("rfq")}>Devis</th>
+                <th onClick={() => toggleSort("support")}>Support</th>
+                <th onClick={() => toggleSort("downloads")}>Téléchargements</th>
+                <th onClick={() => toggleSort("conversionRate")}>Taux de conversion</th>
+                <th title={ANOMALY_HEADER_TITLE}>Pics exclus</th>
+                <th title={MISSING_HEADER_TITLE}>Données manquantes</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sorted.map((s) => (
+                <tr key={s.id} onClick={() => setSelected(s)} style={{ fontWeight: s.id === selected?.id ? 600 : 400 }}>
+                  <td>{s.name}</td>
+                  <td>{s.region}</td>
+                  <td>{formatCompactNumber(s.sessions)}</td>
+                  <td className={s.sessionsChangePct !== null && s.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
+                    {formatPct(s.sessionsChangePct)}
+                  </td>
+                  <td>{formatCompactNumber(s.organicSessions)}</td>
+                  <td>{formatCompactNumberOrNA(s.aiReferralSessions)}</td>
+                  <td>{formatCompactNumberOrNA(s.searchConsoleClicks)}</td>
+                  <td>{formatPctOrNA(s.lowEngagementShare)}</td>
+                  <td>{formatCompactNumber(s.rfq)}</td>
+                  <td>{formatCompactNumber(s.support)}</td>
+                  <td>{formatCompactNumber(s.downloads)}</td>
+                  <td>{(s.conversionRate * 100).toFixed(2)}%</td>
+                  <td title={ANOMALY_HEADER_TITLE}>{s.excludedAnomalyDays > 0 ? s.excludedAnomalyDays : "—"}</td>
+                  <td title={MISSING_HEADER_TITLE}>{s.missingDays > 0 ? s.missingDays : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {selected && (
         <>
-          <h3 className="section-title">SEO/GEO, signal bot & conversion — {selected.name}</h3>
+          <h3 className="section-title">Détail & tendances — {selected.name}</h3>
           {(() => {
             const note = dataQualityNote(selected.excludedAnomalyDays, selected.missingDays);
-            return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selected.name} ci-dessous.</p> : null;
+            return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selected.name} ci-dessus.</p> : null;
           })()}
           <div className="kpi-grid">
             <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selected.organicSessions)} deltaPct={selected.organicSessionsChangePct} deltaLabel={deltaLabel} />

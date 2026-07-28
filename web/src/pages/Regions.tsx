@@ -38,40 +38,42 @@ export function Regions() {
 
       <div className="card">
         <h2>Détail par région business</h2>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Région</th>
-              <th>Sites</th>
-              <th>Sessions</th>
-              <th>Δ {deltaLabel}</th>
-              <th>Conversions</th>
-              <th>Taux de conversion</th>
-              <th title="Jours de pic trafic anormal exclus des totaux, et jours de données manquantes (sync incomplète -- totaux sous-estimés d'autant)">Données</th>
-            </tr>
-          </thead>
-          <tbody>
-            {regions.map((r) => (
-              <tr key={r.region} onClick={() => setSelected(r.region)} style={{ fontWeight: r.region === selected ? 600 : 400 }}>
-                <td>{r.region}</td>
-                <td>{r.siteCount}</td>
-                <td>{formatCompactNumber(r.sessions)}</td>
-                <td className={r.sessionsChangePct !== null && r.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
-                  {formatPct(r.sessionsChangePct)}
-                </td>
-                <td>{formatCompactNumber(r.conversions)}</td>
-                <td>{(r.conversionRate * 100).toFixed(2)}%</td>
-                <td>
-                  {r.excludedAnomalyDays === 0 && r.missingDays === 0
-                    ? "—"
-                    : [r.excludedAnomalyDays > 0 ? `${r.excludedAnomalyDays} exclu(s)` : null, r.missingDays > 0 ? `${r.missingDays} manquant(s)` : null]
-                        .filter(Boolean)
-                        .join(", ")}
-                </td>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Région</th>
+                <th>Sites</th>
+                <th>Sessions</th>
+                <th>Δ {deltaLabel}</th>
+                <th>Conversions</th>
+                <th>Taux de conversion</th>
+                <th title="Jours où un pic de trafic anormal (signature de bot -- voir l'onglet Bots) a été détecté sur un des sites de cette région et exclu des totaux de cette ligne.">
+                  Pics exclus
+                </th>
+                <th title="Jours sans synchronisation Piwik Pro pour un des sites de cette région sur la période -- les totaux de cette ligne sous-estiment les vrais chiffres Piwik Pro d'autant.">
+                  Données manquantes
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {regions.map((r) => (
+                <tr key={r.region} onClick={() => setSelected(r.region)} style={{ fontWeight: r.region === selected ? 600 : 400 }}>
+                  <td>{r.region}</td>
+                  <td>{r.siteCount}</td>
+                  <td>{formatCompactNumber(r.sessions)}</td>
+                  <td className={r.sessionsChangePct !== null && r.sessionsChangePct < 0 ? "delta-down" : "delta-up"}>
+                    {formatPct(r.sessionsChangePct)}
+                  </td>
+                  <td>{formatCompactNumber(r.conversions)}</td>
+                  <td>{(r.conversionRate * 100).toFixed(2)}%</td>
+                  <td>{r.excludedAnomalyDays > 0 ? r.excludedAnomalyDays : "—"}</td>
+                  <td>{r.missingDays > 0 ? r.missingDays : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {selectedRegion && (

@@ -52,7 +52,8 @@ export type FindingMetric =
   | "searchConsoleClicks"
   | "rfq"
   | "support"
-  | "downloads";
+  | "downloads"
+  | "organicSearchConsoleGap";
 
 export interface Finding {
   scope: Scope;
@@ -82,6 +83,7 @@ export const METRIC_LABELS: Record<FindingMetric, string> = {
   rfq: "demandes de devis",
   support: "demandes de support",
   downloads: "téléchargements",
+  organicSearchConsoleGap: "écart trafic organique vs clics Search Console",
 };
 
 export function toDayPoints(rows: SnapshotRow[], anomalousDates?: Set<string>): DayPoint[] {

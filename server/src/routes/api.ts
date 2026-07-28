@@ -293,6 +293,74 @@ function buildPeriodFindings(
   return findings.sort((a, b) => b.impactScore - a.impactScore);
 }
 
+// Below this, either number is too small a sample for a ratio to mean anything.
+const MIN_ORGANIC_SESSIONS_FOR_GAP_CHECK = 200;
+const MIN_GSC_CLICKS_FOR_GAP_CHECK = 50;
+// How far the organic-sessions-to-GSC-clicks ratio has to stray from 1:1
+// before it's worth flagging. There's no authoritative "normal" ratio --
+// organic sessions legitimately include non-Google search engines and AI
+// citations that Search Console never sees, so some excess is expected. This
+// is a starting heuristic (4x either way), not a validated benchmark; tune
+// it if it's too noisy or too quiet in practice.
+const ORGANIC_GSC_DISPARITY_RATIO = 4;
+
+/**
+ * Flags a large disparity between organic sessions (Piwik Pro) and Search
+ * Console clicks for the same period/scope -- these should broadly track
+ * each other since both represent Google Search traffic, so a big gap in
+ * either direction is worth a second look, with a first-pass explanation of
+ * why depending on which side is larger.
+ */
+function checkOrganicSearchConsoleGap(scope: Scope, entityId: string, entityName: string, organicSessions: number, searchConsoleClicks: number | null): Finding | null {
+  if (searchConsoleClicks === null) return null;
+  if (organicSessions < MIN_ORGANIC_SESSIONS_FOR_GAP_CHECK || searchConsoleClicks < MIN_GSC_CLICKS_FOR_GAP_CHECK) return null;
+
+  const ratio = organicSessions / searchConsoleClicks;
+  if (ratio >= ORGANIC_GSC_DISPARITY_RATIO) {
+    return {
+      scope,
+      entityId,
+      entityName,
+      metric: "organicSearchConsoleGap",
+      label: METRIC_LABELS.organicSearchConsoleGap,
+      direction: "up",
+      changePct: ratio - 1,
+      current: organicSessions,
+      previous: searchConsoleClicks,
+      impactScore: Math.log10(ratio) * Math.log10(organicSessions + 1),
+      explanation:
+        `Trafic organique ${formatRatio(ratio)}x supérieur aux clics Search Console. Pistes : (1) trafic organique incluant ` +
+        `d'autres moteurs/sources que Google (Bing, IA génératives citant le site) que Search Console ne mesure pas, ` +
+        `(2) vague de bots/crawlers classés à tort en organique -- comparer avec l'onglet Bots sur la même période, ` +
+        `(3) délai de traitement propre à Search Console (données généralement à J-2/J-3).`,
+    };
+  }
+  if (ratio <= 1 / ORGANIC_GSC_DISPARITY_RATIO) {
+    return {
+      scope,
+      entityId,
+      entityName,
+      metric: "organicSearchConsoleGap",
+      label: METRIC_LABELS.organicSearchConsoleGap,
+      direction: "down",
+      changePct: ratio - 1,
+      current: organicSessions,
+      previous: searchConsoleClicks,
+      impactScore: Math.log10(1 / ratio) * Math.log10(searchConsoleClicks + 1),
+      explanation:
+        `Clics Search Console ${formatRatio(1 / ratio)}x supérieurs au trafic organique enregistré par Piwik Pro. Pistes : ` +
+        `(1) tracking Piwik Pro bloqué chez une partie des visiteurs (bloqueurs de pub, consentement RGPD refusé avant le ` +
+        `déclenchement du tag), (2) rebond immédiat avant chargement complet du tag de tracking, (3) un clic Search Console ` +
+        `ne garantit pas une session Piwik si la page ne charge pas (lenteur, erreur serveur).`,
+    };
+  }
+  return null;
+}
+
+function formatRatio(ratio: number): string {
+  return ratio.toFixed(ratio >= 10 ? 0 : 1);
+}
+
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/health", async () => ({ ok: true, mode: config.mode }));
 
@@ -317,6 +385,9 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         const current = totalsOf(currentBySite.get(s.id) ?? []);
         const previous = totalsOf(compareBySite.get(s.id) ?? []);
         const changes = withChanges(current, previous, historyOk);
+        const findings = buildPeriodFindings("site", s.id, s.name, current, previous, historyOk);
+        const gap = checkOrganicSearchConsoleGap("site", s.id, s.name, current.organicSessions, current.searchConsoleClicks);
+        if (gap) findings.push(gap);
         return {
           id: s.id,
           name: s.name,
@@ -324,7 +395,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           ...changes,
           excludedAnomalyDays: excludedInCurrentBySite.get(s.id) ?? 0,
           missingDays: missingInCurrentBySite.get(s.id) ?? 0,
-          findings: buildPeriodFindings("site", s.id, s.name, current, previous, historyOk),
+          findings,
         };
       });
     });
@@ -362,13 +433,16 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           current: totalsOf(currentBySite.get(id) ?? []),
           previous: totalsOf(compareBySite.get(id) ?? []),
         }));
+        const regionFindings = buildPeriodFindings("continent", region, region, current, previous, historyOk, children);
+        const regionGap = checkOrganicSearchConsoleGap("continent", region, region, current.organicSessions, current.searchConsoleClicks);
+        if (regionGap) regionFindings.push(regionGap);
         result.push({
           region,
           siteCount: siteIds.length,
           ...changes,
           excludedAnomalyDays,
           missingDays,
-          findings: buildPeriodFindings("continent", region, region, current, previous, historyOk, children),
+          findings: regionFindings,
         });
       }
       result.sort((a, b) => b.sessions - a.sessions);
@@ -400,6 +474,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         previous: totalsOf(compareBySite.get(s.id) ?? []),
       }));
       const findings = buildPeriodFindings("global", "global", "Tous sites", current, previous, historyOk, globalChildren);
+      const globalGap = checkOrganicSearchConsoleGap("global", "global", "Tous sites", current.organicSessions, current.searchConsoleClicks);
+      if (globalGap) findings.push(globalGap);
 
       // Synthesis bullets generated on the fly for exactly this period (reuses
       // the same rule engine as the cron-generated weekly synthesis_history,

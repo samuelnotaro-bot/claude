@@ -343,6 +343,10 @@ body {
   .grid-2 { grid-template-columns: 1fr; }
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+
 table.data-table {
   width: 100%;
   border-collapse: collapse;
@@ -366,6 +370,7 @@ table.data-table td {
   padding: 9px 10px;
   border-bottom: 1px solid var(--gridline);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 table.data-table tbody tr:hover {

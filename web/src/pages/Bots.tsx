@@ -89,32 +89,34 @@ export function Bots() {
             {signal.anomalies.length === 0 ? (
               <p className="empty-state">Aucune variation statistiquement anormale confirmée sur cette période (historique probablement encore trop court -- voir les pics ci-dessus).</p>
             ) : (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Site</th>
-                    <th>Région</th>
-                    <th>Date</th>
-                    <th>Canal</th>
-                    <th>Sessions</th>
-                    <th>Référence</th>
-                    <th>Excès</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {signal.anomalies.map((a, i) => (
-                    <tr key={i}>
-                      <td>{a.siteName}</td>
-                      <td>{a.region}</td>
-                      <td>{formatDate(a.date)}</td>
-                      <td>{a.channels.map((c) => CHANNEL_LABELS[c] ?? c).join(" + ")}</td>
-                      <td>{formatCompactNumber(a.sessions)}</td>
-                      <td>{formatCompactNumber(a.baselineSessions)}</td>
-                      <td>{formatCompactNumber(a.excessSessions)}</td>
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Site</th>
+                      <th>Région</th>
+                      <th>Date</th>
+                      <th>Canal</th>
+                      <th>Sessions</th>
+                      <th>Référence</th>
+                      <th>Excès</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {signal.anomalies.map((a, i) => (
+                      <tr key={i}>
+                        <td>{a.siteName}</td>
+                        <td>{a.region}</td>
+                        <td>{formatDate(a.date)}</td>
+                        <td>{a.channels.map((c) => CHANNEL_LABELS[c] ?? c).join(" + ")}</td>
+                        <td>{formatCompactNumber(a.sessions)}</td>
+                        <td>{formatCompactNumber(a.baselineSessions)}</td>
+                        <td>{formatCompactNumber(a.excessSessions)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </>
