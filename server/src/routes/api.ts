@@ -72,6 +72,8 @@ async function loadCleanSeriesBySite(
   currentBySite: Map<string, DayPoint[]>;
   compareBySite: Map<string, DayPoint[]>;
   excludedInCurrentBySite: Map<string, number>;
+  /** Days with no snapshot row at all in the current period (sync gap, not an anomaly exclusion) -- see the "missingDays" doc comment where this is surfaced. */
+  missingInCurrentBySite: Map<string, number>;
 }> {
   const compareRange = resolveComparisonRange(period);
   const spanFrom = addDaysIso(compareRange.from, -ANOMALY_BASELINE_PADDING_DAYS);
@@ -80,6 +82,7 @@ async function loadCleanSeriesBySite(
   const currentBySite = new Map<string, DayPoint[]>();
   const compareBySite = new Map<string, DayPoint[]>();
   const excludedInCurrentBySite = new Map<string, number>();
+  const missingInCurrentBySite = new Map<string, number>();
 
   for (const id of siteIds) {
     const raw = bulk.get(id) ?? [];
@@ -87,7 +90,9 @@ async function loadCleanSeriesBySite(
     const inRange = (date: string, from: string, to: string) => date >= from && date <= to;
 
     const currentRaw = clean.filter((r) => inRange(r.date, period.from, period.to));
-    currentBySite.set(id, zeroFillDayPoints(toDayPoints(currentRaw), period.from, period.to));
+    const currentFilled = zeroFillDayPoints(toDayPoints(currentRaw), period.from, period.to);
+    currentBySite.set(id, currentFilled);
+    missingInCurrentBySite.set(id, currentFilled.filter((p) => p.isMissing).length);
 
     const compareRaw = clean.filter((r) => inRange(r.date, compareRange.from, compareRange.to));
     compareBySite.set(id, zeroFillDayPoints(toDayPoints(compareRaw), compareRange.from, compareRange.to));
@@ -95,7 +100,7 @@ async function loadCleanSeriesBySite(
     excludedInCurrentBySite.set(id, anomalies.filter((a) => inRange(a.date, period.from, period.to)).length);
   }
 
-  return { currentBySite, compareBySite, excludedInCurrentBySite };
+  return { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite };
 }
 
 interface KpiTotals {
@@ -304,7 +309,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
       const compareRange = resolveComparisonRange(period);
       const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
-      const { currentBySite, compareBySite, excludedInCurrentBySite } = await loadCleanSeriesBySite(
+      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite } = await loadCleanSeriesBySite(
         sites.map((s) => s.id),
         period
       );
@@ -318,6 +323,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           region: s.continent,
           ...changes,
           excludedAnomalyDays: excludedInCurrentBySite.get(s.id) ?? 0,
+          missingDays: missingInCurrentBySite.get(s.id) ?? 0,
           findings: buildPeriodFindings("site", s.id, s.name, current, previous, historyOk),
         };
       });
@@ -337,7 +343,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         list.push(s.id);
         byRegion.set(s.continent, list);
       }
-      const { currentBySite, compareBySite, excludedInCurrentBySite } = await loadCleanSeriesBySite(
+      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite } = await loadCleanSeriesBySite(
         sites.map((s) => s.id),
         period
       );
@@ -350,6 +356,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         const previous = totalsOf(compareSeries);
         const changes = withChanges(current, previous, historyOk);
         const excludedAnomalyDays = siteIds.reduce((a, id) => a + (excludedInCurrentBySite.get(id) ?? 0), 0);
+        const missingDays = siteIds.reduce((a, id) => a + (missingInCurrentBySite.get(id) ?? 0), 0);
         const children: ChildKpi[] = siteIds.map((id) => ({
           name: siteById.get(id)?.name ?? id,
           current: totalsOf(currentBySite.get(id) ?? []),
@@ -360,6 +367,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
           siteCount: siteIds.length,
           ...changes,
           excludedAnomalyDays,
+          missingDays,
           findings: buildPeriodFindings("continent", region, region, current, previous, historyOk, children),
         });
       }
@@ -375,7 +383,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
       const compareRange = resolveComparisonRange(period);
       const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
-      const { currentBySite, compareBySite, excludedInCurrentBySite } = await loadCleanSeriesBySite(
+      const { currentBySite, compareBySite, excludedInCurrentBySite, missingInCurrentBySite } = await loadCleanSeriesBySite(
         sites.map((s) => s.id),
         period
       );
@@ -385,6 +393,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const previous = totalsOf(compareSeries);
       const changes = withChanges(current, previous, historyOk);
       const excludedAnomalyDays = sites.reduce((a, s) => a + (excludedInCurrentBySite.get(s.id) ?? 0), 0);
+      const missingDays = sites.reduce((a, s) => a + (missingInCurrentBySite.get(s.id) ?? 0), 0);
       const globalChildren: ChildKpi[] = sites.map((s) => ({
         name: s.name,
         current: totalsOf(currentBySite.get(s.id) ?? []),
@@ -411,10 +420,13 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         compare: period.compare,
         comparisonFrom: compareRange.from,
         comparisonTo: compareRange.to,
+        historyOk,
+        earliestDataDate: earliestDate,
         siteCount: sites.length,
         ...changes,
         series: currentSeries,
         excludedAnomalyDays,
+        missingDays,
         findings,
         synthesisBullets,
       };

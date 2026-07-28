@@ -104,10 +104,16 @@ export interface Overview extends KpiSet {
   compare: "previous_period" | "previous_year";
   comparisonFrom: string;
   comparisonTo: string;
+  /** False when the comparison period reaches further back than the account's actual synced history -- deltas are null in that case, not because nothing changed. */
+  historyOk: boolean;
+  /** Earliest date with any synced data at all, or null if there's no data yet. */
+  earliestDataDate: string | null;
   siteCount: number;
   series: DayPoint[];
   /** Days excluded from the KPIs above because they were flagged as a traffic-flood anomaly. */
   excludedAnomalyDays: number;
+  /** Days with no synced snapshot at all in this period (sync gap) -- totals below likely undercount real Piwik Pro numbers by this much. */
+  missingDays: number;
   findings: Finding[];
   /** Synthesis bullets generated on the fly for this exact period (distinct from the cron-generated weekly synthesis_history log, see the Synthèses tab). */
   synthesisBullets: string[];
@@ -118,6 +124,7 @@ export interface SiteSummary extends KpiSet {
   name: string;
   region: string;
   excludedAnomalyDays: number;
+  missingDays: number;
   findings: Finding[];
 }
 
@@ -125,6 +132,7 @@ export interface RegionSummary extends KpiSet {
   region: string;
   siteCount: number;
   excludedAnomalyDays: number;
+  missingDays: number;
   findings: Finding[];
 }
 

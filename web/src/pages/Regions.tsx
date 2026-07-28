@@ -5,7 +5,7 @@ import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA, dataQualityNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 export function Regions() {
@@ -47,7 +47,7 @@ export function Regions() {
               <th>Δ {deltaLabel}</th>
               <th>Conversions</th>
               <th>Taux de conversion</th>
-              <th title="Jours de pic trafic anormal exclus du calcul ci-dessus">Anomalies</th>
+              <th title="Jours de pic trafic anormal exclus des totaux, et jours de données manquantes (sync incomplète -- totaux sous-estimés d'autant)">Données</th>
             </tr>
           </thead>
           <tbody>
@@ -61,7 +61,13 @@ export function Regions() {
                 </td>
                 <td>{formatCompactNumber(r.conversions)}</td>
                 <td>{(r.conversionRate * 100).toFixed(2)}%</td>
-                <td>{r.excludedAnomalyDays > 0 ? `${r.excludedAnomalyDays} exclu(s)` : "—"}</td>
+                <td>
+                  {r.excludedAnomalyDays === 0 && r.missingDays === 0
+                    ? "—"
+                    : [r.excludedAnomalyDays > 0 ? `${r.excludedAnomalyDays} exclu(s)` : null, r.missingDays > 0 ? `${r.missingDays} manquant(s)` : null]
+                        .filter(Boolean)
+                        .join(", ")}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -71,16 +77,27 @@ export function Regions() {
       {selectedRegion && (
         <>
           <h3 className="section-title">SEO/GEO, signal bot & conversion — {selectedRegion.region}</h3>
+          {(() => {
+            const note = dataQualityNote(selectedRegion.excludedAnomalyDays, selectedRegion.missingDays);
+            return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selectedRegion.region} ci-dessous.</p> : null;
+          })()}
           <div className="kpi-grid">
             <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selectedRegion.organicSessions)} deltaPct={selectedRegion.organicSessionsChangePct} deltaLabel={deltaLabel} />
-            <KpiTile label="Trafic référé par IA" value={formatCompactNumberOrNA(selectedRegion.aiReferralSessions)} deltaPct={selectedRegion.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
+            <KpiTile
+              label="Trafic référé par IA (estimation)"
+              value={formatCompactNumberOrNA(selectedRegion.aiReferralSessions)}
+              deltaPct={selectedRegion.aiReferralSessionsChangePct}
+              deltaLabel={deltaLabel}
+              note="Pas une métrique native Piwik Pro : reclassement par domaine référent connu."
+            />
             <KpiTile label="Clics Search Console" value={formatCompactNumberOrNA(selectedRegion.searchConsoleClicks)} deltaPct={selectedRegion.searchConsoleClicksChangePct} deltaLabel={deltaLabel} />
             <KpiTile
-              label="Trafic à faible engagement (signal bot)"
+              label="Trafic à faible engagement (estimation signal bot)"
               value={formatPctOrNA(selectedRegion.lowEngagementShare)}
               deltaPct={selectedRegion.lowEngagementShareChangePct}
               deltaIsGoodWhenUp={false}
               deltaLabel={deltaLabel}
+              note="Pas une métrique native Piwik Pro : sessions rebond sur organique/direct."
             />
             <KpiTile label="Demandes de devis" value={formatCompactNumber(selectedRegion.rfq)} deltaPct={selectedRegion.rfqChangePct} deltaLabel={deltaLabel} />
             <KpiTile label="Demandes de support" value={formatCompactNumber(selectedRegion.support)} deltaPct={selectedRegion.supportChangePct} deltaLabel={deltaLabel} />

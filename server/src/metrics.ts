@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import * as piwik from "./piwik/client.js";
-import { generateDemoMetrics, demoCountryBreakdown, demoCountryChannelBreakdown } from "./demoData.js";
-import type { DailySiteMetrics, CountryBreakdown } from "./piwik/types.js";
+import { generateDemoMetrics, demoCountryChannelBreakdown } from "./demoData.js";
+import type { DailySiteMetrics } from "./piwik/types.js";
 import type { CountryChannelRow } from "./piwik/client.js";
 
 export async function fetchDailyMetrics(siteId: string, date: string): Promise<DailySiteMetrics> {
@@ -9,13 +9,6 @@ export async function fetchDailyMetrics(siteId: string, date: string): Promise<D
     return piwik.getDailyMetrics(siteId, date);
   }
   return generateDemoMetrics(siteId, date, new Date());
-}
-
-export async function fetchCountryBreakdown(siteId: string, dateFrom: string, dateTo: string): Promise<CountryBreakdown[]> {
-  if (config.mode === "live") {
-    return piwik.getCountryBreakdown(siteId, dateFrom, dateTo);
-  }
-  return demoCountryBreakdown(siteId);
 }
 
 export async function fetchCountryChannelBreakdown(siteId: string, dateFrom: string, dateTo: string): Promise<CountryChannelRow[]> {

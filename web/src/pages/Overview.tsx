@@ -4,15 +4,8 @@ import { KpiTile } from "../components/KpiTile";
 import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPctOrNA, dataQualityNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
-
-const ANOMALY_TOOLTIP =
-  "Seuls les pics de trafic statistiquement extrêmes sont exclus de ce calcul. Pour une fiabilité complète, vérifiez le filtre anti-bot dans Piwik Pro > Administration > Confidentialité.";
-
-function anomalyNote(days: number): string {
-  return `${days} jour${days > 1 ? "s" : ""} de pic trafic exclu${days > 1 ? "s" : ""} sur la période`;
-}
 
 export function Overview() {
   const { queryParams, compare, from, to } = usePeriod();
@@ -56,6 +49,7 @@ export function Overview() {
 
   const deltaLabel = periodComparisonLabel(compare);
   const periodLabel = from === to ? from : `${from} → ${to}`;
+  const qualityNote = dataQualityNote(overview.excludedAnomalyDays, overview.missingDays);
 
   return (
     <div>
@@ -65,25 +59,30 @@ export function Overview() {
         </p>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {gapMessage && <span className="chart-note" style={{ margin: 0 }}>{gapMessage}</span>}
-          <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps}>
-            {fillingGaps ? "Vérification…" : "Combler les trous de données"}
+          <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps} title="Interroge Piwik Pro en direct, au rythme autorisé par votre limite d'appels -- peut prendre 1 à 2 minutes.">
+            {fillingGaps ? "Vérification… (jusqu'à 1-2 min)" : "Combler les trous de données"}
           </button>
         </div>
       </div>
 
+      {!overview.historyOk && (
+        <p className="data-quality-banner">
+          ⚠ Comparaison indisponible pour cette sélection : il faudrait un historique remontant au{" "}
+          {overview.comparisonFrom}, mais les données synchronisées commencent seulement le{" "}
+          {overview.earliestDataDate ?? "?"}. Ce n'est pas une absence de variation -- choisissez une période plus courte,
+          ou "à la période précédente" plutôt qu'"à l'année précédente" si votre historique Piwik Pro ne remonte pas
+          aussi loin.
+        </p>
+      )}
+
+      {qualityNote && <p className="data-quality-banner">⚠ {qualityNote}, sur tous les chiffres ci-dessous.</p>}
+
       <h3 className="section-title">Trafic & conversion</h3>
       <div className="kpi-grid">
-        <KpiTile
-          label="Sessions"
-          value={formatCompactNumber(overview.sessions)}
-          deltaPct={overview.sessionsChangePct}
-          deltaLabel={deltaLabel}
-          note={overview.excludedAnomalyDays > 0 ? anomalyNote(overview.excludedAnomalyDays) : undefined}
-          noteTooltip={ANOMALY_TOOLTIP}
-        />
+        <KpiTile label="Sessions" value={formatCompactNumber(overview.sessions)} deltaPct={overview.sessionsChangePct} deltaLabel={deltaLabel} />
         <KpiTile label="Taux de conversion global" value={`${(overview.conversionRate * 100).toFixed(2)}%`} deltaPct={overview.conversionRateChangePct} deltaLabel={deltaLabel} />
-        <KpiTile label="Demandes de devis" value={formatCompactNumber(overview.rfq)} deltaPct={overview.rfqChangePct} deltaLabel={deltaLabel} />
-        <KpiTile label="Demandes de support" value={formatCompactNumber(overview.support)} deltaPct={overview.supportChangePct} deltaLabel={deltaLabel} />
+        <KpiTile label="Demandes de devis" value={formatCompactNumber(overview.rfq)} deltaPct={overview.rfqChangePct} deltaLabel={deltaLabel} note="Sous-ensemble des conversions Piwik Pro classé par mot-clé dans le nom de l'objectif (devis/quote)." />
+        <KpiTile label="Demandes de support" value={formatCompactNumber(overview.support)} deltaPct={overview.supportChangePct} deltaLabel={deltaLabel} note="Sous-ensemble des conversions Piwik Pro classé par mot-clé dans le nom de l'objectif (support)." />
         <KpiTile label="Téléchargements" value={formatCompactNumber(overview.downloads)} deltaPct={overview.downloadsChangePct} deltaLabel={deltaLabel} />
       </div>
 
@@ -91,18 +90,22 @@ export function Overview() {
       <div className="kpi-grid">
         <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(overview.organicSessions)} deltaPct={overview.organicSessionsChangePct} deltaLabel={deltaLabel} />
         <KpiTile
-          label="Trafic référé par IA"
+          label="Trafic référé par IA (estimation)"
           value={formatCompactNumberOrNA(overview.aiReferralSessions)}
           deltaPct={overview.aiReferralSessionsChangePct}
           deltaLabel={deltaLabel}
-          note={overview.aiReferralSessions === null ? "Requête Piwik Pro échouée -- voir /api/diagnostics/optional-metrics" : undefined}
+          note={
+            overview.aiReferralSessions === null
+              ? "Requête Piwik Pro échouée -- voir /api/diagnostics/optional-metrics"
+              : "Pas une métrique native Piwik Pro : reclassement des sessions dont le référent correspond à une liste connue d'assistants IA (aiReferrers.ts)."
+          }
         />
         <KpiTile
           label="Clics Search Console"
           value={formatCompactNumberOrNA(overview.searchConsoleClicks)}
           deltaPct={overview.searchConsoleClicksChangePct}
           deltaLabel={deltaLabel}
-          note={overview.searchConsoleClicks === null ? "Intégration Search Console non configurée (Piwik Pro > Réglages > Intégrations) ou requête échouée -- voir /api/diagnostics/optional-metrics" : undefined}
+          note={overview.searchConsoleClicks === null ? "Intégration Search Console non configurée (Piwik Pro > Réglages > Intégrations) ou requête échouée -- voir /api/diagnostics/optional-metrics" : "Donnée native de l'intégration Search Console de Piwik Pro."}
         />
         <KpiTile label="Impressions Search Console" value={formatCompactNumberOrNA(overview.searchConsoleImpressions)} deltaPct={null} deltaLabel="" />
       </div>
@@ -110,7 +113,7 @@ export function Overview() {
       <h3 className="section-title">Signal bot</h3>
       <div className="kpi-grid">
         <KpiTile
-          label="Trafic à faible engagement (organique/direct)"
+          label="Trafic à faible engagement (estimation signal bot)"
           value={formatPctOrNA(overview.lowEngagementShare)}
           deltaPct={overview.lowEngagementShareChangePct}
           deltaIsGoodWhenUp={false}
@@ -118,7 +121,7 @@ export function Overview() {
           note={
             overview.lowEngagementShare === null
               ? "Requête Piwik Pro échouée -- voir /api/diagnostics/optional-metrics"
-              : "Sessions rebond (1 page) sur les canaux organique/direct -- proxy de trafic non-humain. Détail dans l'onglet Bots."
+              : "Pas une métrique native Piwik Pro : sessions rebond (1 page) sur organique/direct, proxy de trafic non-humain. Détail dans l'onglet Bots."
           }
         />
       </div>

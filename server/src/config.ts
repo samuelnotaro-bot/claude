@@ -18,6 +18,14 @@ export const config = {
   port: Number(env("PORT", "4000")),
   databaseUrl: env("DATABASE_URL"),
   backfillDays: Number(env("BACKFILL_DAYS", "90")),
+  // Piwik Pro enforces a per-minute API rate limit (exact figure depends on
+  // your plan/contract -- check Administration or your Piwik Pro contract).
+  // This app makes several calls per site per day synced (totals, channels,
+  // goals, downloads, AI-referral, bounces, Search Console), so on ~20 sites
+  // a naive unpaced sync or gap-fill can burst well past most plans' limits,
+  // which then shows up as silent sync failures (i.e. more data gaps).
+  // Lower this to match your actual plan if you still see 429s in the logs.
+  piwikMaxRequestsPerMinute: Number(env("PIWIK_MAX_REQUESTS_PER_MINUTE", "60")),
   fetchCron: env("FETCH_CRON", "0 6 * * *"),
   synthesisCron: env("SYNTHESIS_CRON", "0 7 * * 1"),
   dashboard: {

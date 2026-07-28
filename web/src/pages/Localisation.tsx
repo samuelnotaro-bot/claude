@@ -8,22 +8,26 @@ export function Localisation() {
   const [mismatches, setMismatches] = useState<GeoMismatch[]>([]);
   const [checking, setChecking] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [checkedForPeriod, setCheckedForPeriod] = useState<string | null>(null);
 
+  // Shows the last stored check result immediately (fast, from the DB) instead
+  // of auto-triggering a fresh live check on every period change: a real check
+  // queries Piwik Pro per site and is now correctly rate-limited (see
+  // piwik/client.ts), so re-running it just from browsing periods would mean
+  // waiting tens of seconds on every click. "Vérifier maintenant" runs it for
+  // the currently selected period explicitly.
   useEffect(() => {
-    setChecking(true);
-    api
-      .checkGeoMismatches(queryParams)
-      .then((data) => {
-        setMismatches(data);
-        setLoaded(true);
-      })
-      .finally(() => setChecking(false));
-  }, [queryParams]);
+    api.geoMismatches().then((data) => {
+      setMismatches(data);
+      setLoaded(true);
+    });
+  }, []);
 
   async function handleCheck() {
     setChecking(true);
     try {
       setMismatches(await api.checkGeoMismatches(queryParams));
+      setCheckedForPeriod(`${from} → ${to}`);
     } finally {
       setChecking(false);
     }
@@ -36,8 +40,11 @@ export function Localisation() {
           <div>
             <h2 style={{ marginBottom: 4 }}>Cohérence géographique du trafic</h2>
             <p className="card-subtitle" style={{ margin: 0 }}>
-              Alerte si un pays inattendu représente au moins 20% du trafic d'un site sur {from} → {to}, avec répartition
-              organique/direct du pays concerné et une première piste d'analyse.
+              Alerte si un pays inattendu représente au moins 20% du trafic d'un site, avec répartition organique/direct du
+              pays concerné et une première piste d'analyse.
+              {checkedForPeriod
+                ? ` Dernière vérification pour ${checkedForPeriod}.`
+                : ` Cliquez "Vérifier maintenant" pour lancer une vérification sur ${from} → ${to} (interroge Piwik Pro en direct, peut prendre plusieurs dizaines de secondes selon le nombre de sites).`}
             </p>
           </div>
           <button className="primary-btn" onClick={handleCheck} disabled={checking}>

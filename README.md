@@ -270,6 +270,39 @@ des zéros** sur toute la période demandée (`trends.zeroFillDayPoints`) combin
 affichée que si l'historique remonte réellement assez loin, pas si un jour
 isolé manque.
 
+## Transparence sur les données affichées
+
+Trois choses font que les totaux affichés ne sont *pas* une simple somme brute
+des chiffres Piwik Pro, et sont maintenant signalées directement sur les
+métriques concernées plutôt que documentées seulement ici :
+
+- **Jours de pic trafic exclus** (voir "Détection des pics de trafic anormal"
+  plus bas) : volontaire, pour ne pas laisser une vague de bots gonfler les
+  chiffres business. Indiqué par un bandeau d'avertissement en haut de chaque
+  vue quand ça s'applique.
+- **Jours de données manquantes** (`missingDays`) : un vrai trou de
+  synchronisation (voir "Fiabilité de la synchronisation" plus bas) --
+  contrairement à l'exclusion ci-dessus, ce n'est pas voulu, et ça veut dire
+  que les totaux **sous-estiment** les vrais chiffres Piwik Pro d'autant.
+  Même bandeau d'avertissement, avec le nombre de jours concernés.
+- **Métriques dérivées, pas natives Piwik Pro** : trafic référé par IA
+  (reclassement par domaine référent, voir `aiReferrers.ts`), signal bot
+  (proxy à partir des sessions rebond organique/direct), et la répartition
+  devis/support (reclassement par mot-clé dans le nom de l'objectif, voir
+  `goalCategories.ts`) n'existent pas sous cette forme dans l'interface Piwik
+  Pro elle-même -- chaque tuile concernée porte la mention "(estimation)" et
+  une note l'explique.
+
+Par ailleurs, **votre compte Piwik Pro ne conserve pas plus de ~60 jours
+d'historique** : toute comparaison nécessitant de remonter plus loin (période
+personnalisée longue, préréglages 90/365 jours avec comparaison à la période
+précédente, ou toute comparaison "à l'année précédente") affiche "—" avec un
+message explicite plutôt qu'un delta -- ce n'est pas une absence de variation,
+c'est l'absence de donnée pour la comparer. Alignez `BACKFILL_DAYS` sur cette
+même limite (au lieu de la valeur par défaut de 90) pour éviter de gaspiller
+des appels Piwik Pro (soumis à une limite par minute, voir plus bas) sur des
+dates qui ne renverront jamais rien.
+
 ## Explication des variations ("pourquoi ce chiffre a bougé")
 
 Pour une variation significative au niveau global ou d'une région business
@@ -302,6 +335,17 @@ comptabilisé (`daysFailed` dans la réponse de `POST /api/data/fill-gaps`,
 visible dans le message affiché par le bouton "Combler les trous de
 données") mais n'empêche plus les autres sites/jours du même lot d'être
 traités.
+
+Piwik Pro applique aussi une limite d'appels API par minute (le chiffre exact
+dépend de votre offre). `server/src/piwik/client.ts` fait passer **tous** les
+appels par un limiteur à fenêtre glissante (`PIWIK_MAX_REQUESTS_PER_MINUTE`,
+défaut 60/min) au même point de passage que chaque requête HTTP, et gère les
+réponses 429 (respecte `Retry-After`, jusqu'à 3 tentatives) avant d'abandonner
+proprement -- géré par la résilience par item ci-dessus, donc un item qui
+échoue vraiment est retenté au prochain passage plutôt que de bloquer le
+reste. `geoMismatch.ts` a aussi été réduit à une seule requête Piwik Pro par
+site (au lieu de deux) en dérivant les totaux par pays de la répartition par
+canal déjà récupérée.
 
 ## Fiabilité sur Render (démarrage et synchronisation)
 

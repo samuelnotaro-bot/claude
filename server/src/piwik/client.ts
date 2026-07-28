@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import type { PiwikApp, DailySiteMetrics, CountryBreakdown, Channel } from "./types.js";
+import type { PiwikApp, DailySiteMetrics, Channel } from "./types.js";
 import { categorizeGoal } from "../goalCategories.js";
 import { isAiReferrerSource } from "../aiReferrers.js";
 
@@ -85,20 +85,66 @@ async function getAccessToken(): Promise<string> {
   return tokenCache.accessToken;
 }
 
-async function piwikFetch<T>(pathAndQuery: string, init: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
-  const res = await fetch(`${config.piwik.baseUrl}${pathAndQuery}`, {
-    ...init,
-    headers: {
-      ...init.headers,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Piwik Pro API error on ${pathAndQuery}: ${res.status} ${await res.text()}`);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Sliding-window client-side rate limiter shared by every Piwik Pro call
+// (paced right here, the one chokepoint every request goes through) --
+// staying under config.piwik.piwikMaxRequestsPerMinute keeps a busy sync
+// (up to ~7 calls/site/day, ~20 sites) from bursting past whatever limit the
+// account's Piwik Pro plan enforces, which otherwise surfaces as silent
+// failures (i.e. more data gaps, not fewer).
+const requestTimestamps: number[] = [];
+
+async function waitForRateLimitSlot(): Promise<void> {
+  const limit = config.piwikMaxRequestsPerMinute;
+  if (limit <= 0) return; // 0/negative = pacing disabled
+  for (;;) {
+    const now = Date.now();
+    while (requestTimestamps.length > 0 && now - requestTimestamps[0] >= 60_000) {
+      requestTimestamps.shift();
+    }
+    if (requestTimestamps.length < limit) {
+      requestTimestamps.push(now);
+      return;
+    }
+    await sleep(60_000 - (now - requestTimestamps[0]) + 25);
   }
-  return res.json() as Promise<T>;
+}
+
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+async function piwikFetch<T>(pathAndQuery: string, init: RequestInit = {}): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    await waitForRateLimitSlot();
+    const token = await getAccessToken();
+    const res = await fetch(`${config.piwik.baseUrl}${pathAndQuery}`, {
+      ...init,
+      headers: {
+        ...init.headers,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (res.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+      // Rate-limited despite client-side pacing (e.g. another process shares
+      // the same Piwik Pro credentials) -- honor Retry-After when given,
+      // otherwise back off for a full window, then retry a bounded number
+      // of times before giving up (the caller's per-item error isolation,
+      // see sync.ts, turns a final failure into a skip-and-retry-later
+      // rather than aborting a whole batch).
+      const retryAfterHeader = res.headers.get("Retry-After");
+      const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 60_000;
+      console.warn(`[piwik] 429 rate limited on ${pathAndQuery}, retrying in ${Math.round(retryAfterMs / 1000)}s (attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES})`);
+      await sleep(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : 60_000);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Piwik Pro API error on ${pathAndQuery}: ${res.status} ${await res.text()}`);
+    }
+    return res.json() as Promise<T>;
+  }
 }
 
 const APPS_PAGE_SIZE = 50;
@@ -374,27 +420,6 @@ export async function probeOptionalMetrics(siteId: string, siteName: string, dat
     channelBounces: { ok: bounces.ok, error: bounces.error },
     searchConsole: { ok: gsc.ok, error: gsc.error },
   };
-}
-
-/** Full visitor-country breakdown (sessions per ISO country code) for a site over a date range, sorted descending. Used by geoMismatch.ts. */
-export async function getCountryBreakdown(siteId: string, dateFrom: string, dateTo: string): Promise<CountryBreakdown[]> {
-  const rows = await queryAnalytics({
-    website_id: siteId,
-    date_from: dateFrom,
-    date_to: dateTo,
-    columns: [{ column_id: COLUMN_IDS.countryDimension }, { column_id: COLUMN_IDS.sessions }],
-  });
-  return rows
-    .map((r) => {
-      const value = r[COLUMN_IDS.countryDimension];
-      const isoCode = Array.isArray(value) ? value[0] : value;
-      return {
-        country: String(isoCode ?? "").toUpperCase(),
-        sessions: Number(r[COLUMN_IDS.sessions] ?? 0),
-      };
-    })
-    .filter((c) => c.country)
-    .sort((a, b) => b.sessions - a.sessions);
 }
 
 export interface CountryChannelRow {

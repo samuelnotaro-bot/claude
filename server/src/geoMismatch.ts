@@ -1,5 +1,5 @@
 import { expectedCountryForSite, expectedRegionSet } from "./expectedCountry.js";
-import { fetchCountryBreakdown, fetchCountryChannelBreakdown } from "./metrics.js";
+import { fetchCountryChannelBreakdown } from "./metrics.js";
 import { getSites, saveGeoMismatches, type GeoMismatchRecord } from "./repo.js";
 
 // Below this volume, a country's share is too noisy to draw any conclusion from.
@@ -73,6 +73,13 @@ function buildActionPlan(siteName: string, expectedLbl: string, country: string,
  * check, see scheduler.ts) but are otherwise the dashboard's selected period
  * (see routes/api.ts's POST /api/geo-mismatches/check), so the Localisation
  * tab's analysis matches whatever window the user is actually looking at.
+ *
+ * One Piwik Pro query per site (country x channel breakdown) instead of two:
+ * per-country totals are derived by summing across channels from the same
+ * response used for the organic/direct split, rather than fetching a
+ * separate country-only breakdown first -- halves the API calls this feature
+ * makes, which matters given Piwik Pro's per-minute rate limit (see
+ * piwik/client.ts).
  */
 export async function checkGeoMismatches(dateFrom = dateNDaysAgo(LOOKBACK_DAYS), dateTo = dateNDaysAgo(0)): Promise<GeoMismatchRecord[]> {
   const sites = await getSites();
@@ -91,20 +98,26 @@ export async function checkGeoMismatches(dateFrom = dateNDaysAgo(LOOKBACK_DAYS),
     })();
     if (!expectedSet) continue;
 
-    const breakdown = await fetchCountryBreakdown(site.id, dateFrom, dateTo);
-    const totalSessions = breakdown.reduce((a, c) => a + c.sessions, 0);
+    const channelBreakdown = await fetchCountryChannelBreakdown(site.id, dateFrom, dateTo);
+    const sessionsByCountry = new Map<string, number>();
+    for (const row of channelBreakdown) {
+      sessionsByCountry.set(row.country, (sessionsByCountry.get(row.country) ?? 0) + row.sessions);
+    }
+    const totalSessions = [...sessionsByCountry.values()].reduce((a, n) => a + n, 0);
     if (totalSessions < MIN_SESSIONS_TO_EVALUATE) continue;
 
-    const expectedSessions = breakdown.filter((c) => expectedSet.has(c.country)).reduce((a, c) => a + c.sessions, 0);
+    const expectedSessions = [...sessionsByCountry.entries()].filter(([c]) => expectedSet.has(c)).reduce((a, [, n]) => a + n, 0);
     const expectedShare = expectedSessions / totalSessions;
 
-    const topUnexpected = breakdown.filter((c) => !expectedSet.has(c.country)).sort((a, b) => b.sessions - a.sessions)[0];
+    const topUnexpected = [...sessionsByCountry.entries()]
+      .filter(([c]) => !expectedSet.has(c))
+      .sort((a, b) => b[1] - a[1])[0];
     if (!topUnexpected) continue;
-    const topUnexpectedShare = topUnexpected.sessions / totalSessions;
+    const [topUnexpectedCountry, topUnexpectedSessions] = topUnexpected;
+    const topUnexpectedShare = topUnexpectedSessions / totalSessions;
     if (topUnexpectedShare < UNEXPECTED_SHARE_THRESHOLD) continue;
 
-    const channelBreakdown = await fetchCountryChannelBreakdown(site.id, dateFrom, dateTo);
-    const countryChannelSessions = channelBreakdown.filter((c) => c.country === topUnexpected.country);
+    const countryChannelSessions = channelBreakdown.filter((c) => c.country === topUnexpectedCountry);
     const countryTotal = countryChannelSessions.reduce((a, c) => a + c.sessions, 0);
     const shareOfChannel = (channel: "organic" | "direct") =>
       countryTotal > 0 ? countryChannelSessions.filter((c) => c.channel === channel).reduce((a, c) => a + c.sessions, 0) / countryTotal : 0;
@@ -116,12 +129,12 @@ export async function checkGeoMismatches(dateFrom = dateNDaysAgo(LOOKBACK_DAYS),
       siteName: site.name,
       expectedLabel: expectedLabel(site.name),
       expectedShare,
-      topUnexpectedCountry: topUnexpected.country,
+      topUnexpectedCountry,
       topUnexpectedShare,
       totalSessions,
       unexpectedOrganicShare,
       unexpectedDirectShare,
-      actionPlan: buildActionPlan(site.name, expectedLabel(site.name), topUnexpected.country, unexpectedOrganicShare, unexpectedDirectShare),
+      actionPlan: buildActionPlan(site.name, expectedLabel(site.name), topUnexpectedCountry, unexpectedOrganicShare, unexpectedDirectShare),
     });
   }
 

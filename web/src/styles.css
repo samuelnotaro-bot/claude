@@ -468,6 +468,16 @@ button.secondary-btn:disabled {
 :root[data-theme="dark"] button.secondary-btn { color: #ffffff; border-color: #ffffff; }
 :root[data-theme="dark"] button.secondary-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
 
+.data-quality-banner {
+  background: color-mix(in srgb, var(--warning) 16%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
 .period-banner {
   display: flex;
   align-items: center;

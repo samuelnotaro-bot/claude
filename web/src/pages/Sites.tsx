@@ -4,7 +4,7 @@ import { TrendChart } from "../components/TrendChart";
 import { ChannelMixChart } from "../components/ChannelMixChart";
 import { KpiTile } from "../components/KpiTile";
 import { FindingsList } from "../components/FindingsList";
-import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA } from "../lib/format";
+import { formatCompactNumber, formatCompactNumberOrNA, formatPct, formatPctOrNA, dataQualityNote } from "../lib/format";
 import { usePeriod, periodComparisonLabel } from "../lib/periodContext";
 
 type SortKey = "name" | "region" | "sessions" | "sessionsChangePct" | "conversionRate";
@@ -62,7 +62,7 @@ export function Sites() {
               <th onClick={() => toggleSort("sessions")}>Sessions</th>
               <th onClick={() => toggleSort("sessionsChangePct")}>Δ {deltaLabel}</th>
               <th onClick={() => toggleSort("conversionRate")}>Taux de conversion</th>
-              <th title="Jours de pic trafic anormal exclus du calcul ci-dessus">Anomalies</th>
+              <th title="Jours de pic trafic anormal exclus des totaux, et jours de données manquantes (sync incomplète -- totaux sous-estimés d'autant)">Données</th>
             </tr>
           </thead>
           <tbody>
@@ -75,7 +75,13 @@ export function Sites() {
                   {formatPct(s.sessionsChangePct)}
                 </td>
                 <td>{(s.conversionRate * 100).toFixed(2)}%</td>
-                <td>{s.excludedAnomalyDays > 0 ? `${s.excludedAnomalyDays} exclu(s)` : "—"}</td>
+                <td>
+                  {s.excludedAnomalyDays === 0 && s.missingDays === 0
+                    ? "—"
+                    : [s.excludedAnomalyDays > 0 ? `${s.excludedAnomalyDays} exclu(s)` : null, s.missingDays > 0 ? `${s.missingDays} manquant(s)` : null]
+                        .filter(Boolean)
+                        .join(", ")}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -85,16 +91,27 @@ export function Sites() {
       {selected && (
         <>
           <h3 className="section-title">SEO/GEO, signal bot & conversion — {selected.name}</h3>
+          {(() => {
+            const note = dataQualityNote(selected.excludedAnomalyDays, selected.missingDays);
+            return note ? <p className="data-quality-banner">⚠ {note}, sur les chiffres de {selected.name} ci-dessous.</p> : null;
+          })()}
           <div className="kpi-grid">
             <KpiTile label="Trafic organique (SEO)" value={formatCompactNumber(selected.organicSessions)} deltaPct={selected.organicSessionsChangePct} deltaLabel={deltaLabel} />
-            <KpiTile label="Trafic référé par IA" value={formatCompactNumberOrNA(selected.aiReferralSessions)} deltaPct={selected.aiReferralSessionsChangePct} deltaLabel={deltaLabel} />
+            <KpiTile
+              label="Trafic référé par IA (estimation)"
+              value={formatCompactNumberOrNA(selected.aiReferralSessions)}
+              deltaPct={selected.aiReferralSessionsChangePct}
+              deltaLabel={deltaLabel}
+              note="Pas une métrique native Piwik Pro : reclassement par domaine référent connu."
+            />
             <KpiTile label="Clics Search Console" value={formatCompactNumberOrNA(selected.searchConsoleClicks)} deltaPct={selected.searchConsoleClicksChangePct} deltaLabel={deltaLabel} />
             <KpiTile
-              label="Trafic à faible engagement (signal bot)"
+              label="Trafic à faible engagement (estimation signal bot)"
               value={formatPctOrNA(selected.lowEngagementShare)}
               deltaPct={selected.lowEngagementShareChangePct}
               deltaIsGoodWhenUp={false}
               deltaLabel={deltaLabel}
+              note="Pas une métrique native Piwik Pro : sessions rebond sur organique/direct."
             />
             <KpiTile label="Demandes de devis" value={formatCompactNumber(selected.rfq)} deltaPct={selected.rfqChangePct} deltaLabel={deltaLabel} />
             <KpiTile label="Demandes de support" value={formatCompactNumber(selected.support)} deltaPct={selected.supportChangePct} deltaLabel={deltaLabel} />

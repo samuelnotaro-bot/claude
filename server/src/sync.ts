@@ -50,11 +50,15 @@ export async function syncDay(date: string): Promise<{ ok: number; failed: numbe
   return { ok, failed };
 }
 
-// Upper bound on how many (site, day) fetches a single gap-fill run performs,
-// so a very large or very old gap doesn't trigger a huge burst of API calls in
-// one go -- it just keeps closing the gap further on each subsequent run
-// (boot, or the "Combler les trous" button) instead of doing it all at once.
-const MAX_GAP_FILLS_PER_RUN = 300;
+// Upper bound on how many (site, day) fetches a single gap-fill run performs.
+// Each fill makes ~6 Piwik Pro calls (totals, channels, goals, downloads,
+// AI-referral, bounces, Search Console), all paced through the same
+// per-minute rate limit (see piwik/client.ts) -- at the default 60/min that's
+// roughly 10 fills/minute, so 25 keeps a single run (boot, or the "Combler
+// les trous" button click) to a couple of minutes instead of tying up the
+// request for as long as a big gap would otherwise take. A large gap just
+// keeps closing further on each subsequent run.
+const MAX_GAP_FILLS_PER_RUN = 25;
 
 export interface GapFillResult {
   sitesWithGaps: number;
