@@ -261,6 +261,29 @@ export interface GapFillResult {
   daysOutOfRetention: number;
 }
 
+export interface DeepBackfillResult {
+  extended: boolean;
+  dateFrom: string | null;
+  dateTo: string | null;
+  daysAdded: number;
+  ok: number;
+  failed: number;
+}
+
+export interface DeepBackfillStartResponse {
+  alreadyRunning: boolean;
+}
+
+export interface DeepBackfillStatus {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  sitesTotal: number;
+  sitesDone: number;
+  result: DeepBackfillResult | null;
+}
+
 export interface OptionalMetricsDiagnostics {
   siteId: string;
   siteName: string;
@@ -286,6 +309,8 @@ export const api = {
   checkGeoMismatches: (periodQuery: string) => post<GeoMismatch[]>(`/api/geo-mismatches/check?${periodQuery}`),
   bots: (periodQuery: string) => get<BotSignal>(`/api/bots?${periodQuery}`),
   fillGaps: () => post<GapFillResult>("/api/data/fill-gaps"),
+  startDeepBackfill: () => post<DeepBackfillStartResponse>("/api/data/deep-backfill"),
+  deepBackfillStatus: () => get<DeepBackfillStatus>("/api/data/deep-backfill/status"),
   optionalMetricsDiagnostics: () => get<OptionalMetricsDiagnostics>("/api/diagnostics/optional-metrics"),
   health: () => get<{ ok: boolean; mode: string }>("/api/health"),
   backfillStatus: () => get<BackfillStatus>("/api/backfill/status"),

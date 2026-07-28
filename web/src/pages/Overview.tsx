@@ -16,6 +16,8 @@ export function Overview() {
   const [error, setError] = useState<string | null>(null);
   const [fillingGaps, setFillingGaps] = useState(false);
   const [gapMessage, setGapMessage] = useState<string | null>(null);
+  const [deepBackfilling, setDeepBackfilling] = useState(false);
+  const [deepBackfillMessage, setDeepBackfillMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -24,6 +26,18 @@ export function Overview() {
       .then(setOverview)
       .catch((e) => setError(String(e)));
   }, [queryParams]);
+
+  // Resume polling on mount if a deep-backfill is already running server-side
+  // (e.g. the button was clicked, then the page got reloaded) -- it's a
+  // background job precisely so leaving/reloading the page doesn't lose it.
+  useEffect(() => {
+    api.deepBackfillStatus().then((status) => {
+      if (status.running) {
+        setDeepBackfilling(true);
+        pollDeepBackfillStatus();
+      }
+    });
+  }, []);
 
   async function handleFillGaps() {
     setFillingGaps(true);
@@ -46,6 +60,58 @@ export function Overview() {
       setGapMessage(`Échec : ${String(e)}`);
     } finally {
       setFillingGaps(false);
+    }
+  }
+
+  // A real 26-month backfill takes a couple of minutes even batched by date
+  // range -- Render's free-plan proxy would kill a single blocking request
+  // well before that finishes, and there's no Shell tab to run it any other
+  // way. The button starts the job server-side and this polls its status
+  // (same pattern as BackfillBanner) so the page refreshes itself instead of
+  // needing a manual reload once it's done.
+  function pollDeepBackfillStatus() {
+    const check = async () => {
+      let status;
+      try {
+        status = await api.deepBackfillStatus();
+      } catch {
+        setTimeout(check, 8000);
+        return;
+      }
+      if (status.running) {
+        setDeepBackfillMessage(`En cours… ${status.sitesDone}/${status.sitesTotal} site(s) traité(s).`);
+        setTimeout(check, 4000);
+        return;
+      }
+      setDeepBackfilling(false);
+      if (status.error) {
+        setDeepBackfillMessage(`Échec : ${status.error}`);
+      } else if (!status.result?.extended) {
+        setDeepBackfillMessage("Déjà à la limite de rétention Piwik Pro -- rien de plus ancien à récupérer.");
+      } else {
+        const r = status.result;
+        setDeepBackfillMessage(
+          `${r.dateFrom} → ${r.dateTo} récupéré (${r.daysAdded} jour(s))` +
+            (r.failed > 0 ? ` -- ${r.failed} échec(s) Piwik Pro, relancez pour réessayer` : "") +
+            "."
+        );
+      }
+      api.overview(queryParams).then(setOverview);
+    };
+    check();
+  }
+
+  async function handleDeepBackfill() {
+    setDeepBackfillMessage(null);
+    try {
+      const res = await api.startDeepBackfill();
+      if (res.alreadyRunning) {
+        setDeepBackfillMessage("Une extension d'historique est déjà en cours.");
+      }
+      setDeepBackfilling(true);
+      pollDeepBackfillStatus();
+    } catch (e) {
+      setDeepBackfillMessage(`Échec : ${String(e)}`);
     }
   }
 
@@ -74,6 +140,21 @@ export function Overview() {
           <p className="chart-note" style={{ margin: 0, maxWidth: 420, textAlign: "right" }}>
             Utile car ce service peut se mettre en veille (plan gratuit) et manquer la synchro automatique quotidienne --
             ce bouton relance la récupération manuellement plutôt que d'attendre le prochain réveil.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {deepBackfillMessage && <span className="chart-note" style={{ margin: 0 }}>{deepBackfillMessage}</span>}
+            <button
+              className="secondary-btn"
+              onClick={handleDeepBackfill}
+              disabled={deepBackfilling}
+              title="Récupère l'historique Piwik Pro jusqu'à la limite de rétention (26 mois) -- tourne en arrière-plan, comptez quelques minutes."
+            >
+              {deepBackfilling ? "Extension en cours…" : "Étendre l'historique (26 mois)"}
+            </button>
+          </div>
+          <p className="chart-note" style={{ margin: 0, maxWidth: 420, textAlign: "right" }}>
+            Utile la première fois, ou si le chargement initial n'a couvert que quelques mois -- va chercher tout ce que
+            Piwik Pro garde encore (jusqu'à 26 mois en arrière), une seule fois suffit ensuite.
           </p>
         </div>
       </div>

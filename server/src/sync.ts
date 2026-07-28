@@ -1,7 +1,7 @@
 import { getSites, upsertSnapshot, getEarliestSnapshotDate, getSnapshotDatesBySite, type SiteRecord } from "./repo.js";
 import { fetchDailyMetrics, fetchMetricsRange } from "./metrics.js";
 import { clearCache } from "./cache.js";
-import { addDaysIso } from "./period.js";
+import { addDaysIso, daysBetweenInclusive } from "./period.js";
 import { config } from "./config.js";
 
 // Bounded concurrency across sites for a given day -- meaningfully faster than
@@ -78,18 +78,31 @@ async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string)
   return { ok, failed };
 }
 
-/** Same as syncDay but for a whole date range, one batched request set per site instead of one per (site, day). */
-export async function syncDateRange(dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number }> {
+/**
+ * Same as syncDay but for a whole date range, one batched request set per
+ * site instead of one per (site, day). onSiteProgress (optional) fires after
+ * each concurrency batch of sites finishes -- used to drive a UI progress
+ * bar for the deep-backfill route (see routes/api.ts), which can take a
+ * couple of minutes against the real Piwik Pro API.
+ */
+export async function syncDateRange(
+  dateFrom: string,
+  dateTo: string,
+  onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
+): Promise<{ ok: number; failed: number }> {
   const sites = await getSites();
   let ok = 0;
   let failed = 0;
+  let done = 0;
   for (let i = 0; i < sites.length; i += CONCURRENCY) {
     const batch = sites.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map((site) => syncSiteRange(site, dateFrom, dateTo)));
     for (const r of results) {
       ok += r.ok;
       failed += r.failed;
+      done++;
     }
+    onSiteProgress?.(done, sites.length);
   }
   return { ok, failed };
 }
@@ -200,4 +213,47 @@ export async function backfillGaps(): Promise<GapFillResult> {
   const remaining = totalMissing - filled - failed;
   console.log(`[sync] gap fill done: ${filled} day(s) filled, ${failed} failed (will retry), ${remaining} not yet attempted, ${outOfRetention} out of retention (never fillable).`);
   return { sitesWithGaps: missingBySite.size, daysFilled: filled, daysRemaining: remaining, daysFailed: failed, daysOutOfRetention: outOfRetention };
+}
+
+export interface ExtendHistoryResult {
+  extended: boolean;
+  dateFrom: string | null;
+  dateTo: string | null;
+  daysAdded: number;
+  ok: number;
+  failed: number;
+}
+
+/**
+ * backfillGaps only fills holes *inside* the already-known history (between
+ * the earliest snapshot on record and yesterday) -- it never reaches further
+ * back than that earliest date, so on an instance whose initial backfill only
+ * covered e.g. the last 90 days, the "Combler les trous de données" button
+ * can never surface anything older than that, even though Piwik Pro itself
+ * keeps up to PIWIK_DATA_RETENTION_DAYS.
+ *
+ * This extends the *other* direction: from the retention floor up to (but
+ * excluding) the current earliest date, in one batched syncDateRange call --
+ * on Render's free plan there's no Shell tab to run `npm run backfill`
+ * manually, so this is exposed as POST /api/data/deep-backfill (same
+ * dashboard auth as everything else) to be triggered from the UI instead.
+ */
+export async function extendHistoryToRetentionFloor(
+  onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
+): Promise<ExtendHistoryResult> {
+  const empty: ExtendHistoryResult = { extended: false, dateFrom: null, dateTo: null, daysAdded: 0, ok: 0, failed: 0 };
+  const earliest = await getEarliestSnapshotDate();
+  if (!earliest) return empty;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
+  const dateTo = addDaysIso(earliest, -1);
+  if (retentionFloor > dateTo) return empty; // already at (or past) the retention floor, nothing older to fetch
+
+  const dateFrom = retentionFloor;
+  console.log(`[sync] extending history back to the retention floor: ${dateFrom} -> ${dateTo} (${daysBetweenInclusive(dateFrom, dateTo)} day(s), batched by date range)...`);
+  const result = await syncDateRange(dateFrom, dateTo, onSiteProgress);
+  clearCache();
+  console.log(`[sync] history extension done: ${result.ok} (site, day) pair(s) filled, ${result.failed} failed.`);
+  return { extended: true, dateFrom, dateTo, daysAdded: daysBetweenInclusive(dateFrom, dateTo), ok: result.ok, failed: result.failed };
 }

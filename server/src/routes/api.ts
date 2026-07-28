@@ -26,7 +26,13 @@ import type { SiteRecord } from "../repo.js";
 import { flagAnomalies } from "../anomaly.js";
 import { checkGeoMismatches } from "../geoMismatch.js";
 import { computeBotSignal } from "../bots.js";
-import { backfillGaps } from "../sync.js";
+import { backfillGaps, extendHistoryToRetentionFloor } from "../sync.js";
+import {
+  getDeepBackfillStatus,
+  startDeepBackfillStatus,
+  updateDeepBackfillProgress,
+  finishDeepBackfillStatus,
+} from "../deepBackfillStatus.js";
 import { probeOptionalMetrics } from "../piwik/client.js";
 import { getBackfillStatus } from "../backfillStatus.js";
 import { config } from "../config.js";
@@ -801,6 +807,31 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/data/fill-gaps", async () => {
     return backfillGaps();
   });
+
+  // Extends history *before* the current earliest snapshot, back to the
+  // Piwik Pro retention floor (see sync.ts#extendHistoryToRetentionFloor) --
+  // unlike fill-gaps, this reaches further back than what's already known.
+  // Exposed as a button (not just npm run backfill) because Render's free
+  // plan has no Shell tab to run that manually.
+  //
+  // Runs in the background rather than blocking the request: a real 26-month
+  // backfill takes a couple of minutes even batched, and Render's proxy (like
+  // most) enforces a request timeout well under that -- a blocking call would
+  // get killed mid-run. The client polls GET /api/data/deep-backfill/status
+  // instead, same pattern as the initial-boot backfill (backfillStatus.ts).
+  app.post("/api/data/deep-backfill", async () => {
+    if (getDeepBackfillStatus().running) {
+      return { alreadyRunning: true };
+    }
+    const sites = await getSites();
+    startDeepBackfillStatus(sites.length);
+    extendHistoryToRetentionFloor((done, total) => updateDeepBackfillProgress(done, total))
+      .then((result) => finishDeepBackfillStatus(result))
+      .catch((err) => finishDeepBackfillStatus(null, err instanceof Error ? err.message : String(err)));
+    return { alreadyRunning: false };
+  });
+
+  app.get("/api/data/deep-backfill/status", async () => getDeepBackfillStatus());
 
   // Runs the 3 optional Piwik Pro queries (AI-referral, channel bounces,
   // Search Console) for one real site and reports success/failure + the raw
