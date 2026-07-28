@@ -124,7 +124,9 @@ export function App() {
         <header className="brand-bar">
           <div className="app-header">
             <div className="product-lockup">
-              <img src="/socomec-pictogram.svg" alt="" className="brand-pictogram" />
+              <span className="brand-pictogram-tile">
+                <img src="/socomec-pictogram.svg" alt="" className="brand-pictogram" />
+              </span>
               <div>
                 <div className="product-name">
                   <span className="product-name-mk">MKWEB</span>

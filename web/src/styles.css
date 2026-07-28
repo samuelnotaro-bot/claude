@@ -12,10 +12,31 @@
   --critical: #d03b3b;
   --warning: #fab219;
 
-  /* Identité de marque inspirée de socomec.fr (bleu institutionnel) -- volontairement fixe, ne change pas avec le thème clair/sombre. */
-  --brand-navy: #00335c;
-  --brand-blue: #0078bf;
-  --brand-yellow: #ffc72c;
+  /* Palette officielle Socomec (fournie par l'équipe) -- volontairement fixe, ne change pas avec le thème clair/sombre. */
+  --brand-c1-025: #f0f3f9;
+  --brand-c1-050: #cfdaee;
+  --brand-c1-100: #a3cceb;
+  --brand-c1-200: #4cafe4;
+  --brand-c1-300: #268fd2;
+  --brand-c1-400: #0070c0;
+  --brand-c1-600: #004f9f;
+  --brand-c1-700: #173884;
+  --brand-c1-800: #232c77;
+  --brand-c1-900: #1e2667;
+  --brand-c2-050: #fff3c2;
+  --brand-c2-100: #ffefae;
+  --brand-c2-200: #ffe993;
+  --brand-c2-300: #ffe270;
+  --brand-c2-400: #ffd940;
+  --brand-c2-500: #ffcc00;
+  --brand-c2-700: #fac200;
+  --brand-c2-800: #f3b400;
+  --brand-c2-900: #eaa800;
+
+  /* Alias sémantiques utilisés dans le reste de la feuille de style. */
+  --brand-navy: var(--brand-c1-900);
+  --brand-blue: var(--brand-c1-400);
+  --brand-yellow: var(--brand-c2-500);
   /* Fond des boxes -- bleu très pâle façon socomec.fr, pas un simple gris neutre "SaaS". */
   --card-tint: #eef2f8;
 
@@ -97,21 +118,27 @@ body {
 .brand-bar {
   position: relative;
   overflow: hidden;
-  background-color: var(--brand-navy);
-  background-image:
-    radial-gradient(circle at 88% 12%, rgba(0, 120, 191, 0.55) 0%, transparent 42%),
-    radial-gradient(circle at 8% 95%, rgba(255, 199, 44, 0.14) 0%, transparent 38%),
-    linear-gradient(120deg, var(--brand-navy) 0%, #012f52 48%, var(--brand-blue) 145%);
-  border-bottom: 3px solid var(--brand-blue);
+  background-color: var(--brand-c1-900);
+  /* Dégradé bleu uniquement (palette c1) -- pas de jaune dans le hero. */
+  background-image: linear-gradient(115deg, var(--brand-c1-900) 0%, var(--brand-c1-800) 30%, var(--brand-c1-700) 55%, var(--brand-c1-600) 78%, var(--brand-c1-400) 130%);
+  border-bottom: 3px solid var(--brand-c1-400);
 }
 
-/* Faint data-point grid over the gradient -- evokes analytics without being loud. */
+/*
+ * Texture "analytique" abstraite en surimpression du dégradé -- pas de photo
+ * de stock (bureau/doudoune sans manches), un motif discret évoquant la data :
+ * grille de points (nuage de données) + courbes de tendance en fond de page.
+ */
 .brand-bar::before {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.09) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 220'%3E%3Cpolyline points='0,170 80,145 160,158 240,105 320,122 400,68 480,90 560,45 600,58' fill='none' stroke='white' stroke-width='2' opacity='0.10'/%3E%3Cpolyline points='0,200 90,190 180,195 270,172 360,180 450,145 540,158 600,135' fill='none' stroke='white' stroke-width='1.5' opacity='0.07'/%3E%3C/svg%3E");
+  background-size: 24px 24px, 600px 220px;
+  background-repeat: repeat, repeat-x;
+  background-position: 0 0, bottom;
   pointer-events: none;
 }
 
@@ -151,12 +178,22 @@ body {
   gap: 14px;
 }
 
+.brand-pictogram-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  background: var(--brand-c1-900);
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
 .brand-pictogram {
   display: block;
-  height: 38px;
+  height: 26px;
   width: auto;
-  flex-shrink: 0;
-  margin-top: 2px;
 }
 
 .product-name {

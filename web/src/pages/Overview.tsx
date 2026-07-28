@@ -62,11 +62,17 @@ export function Overview() {
         <p className="chart-note" style={{ margin: 0 }}>
           Période affichée : {periodLabel} — {deltaLabel}
         </p>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {gapMessage && <span className="chart-note" style={{ margin: 0 }}>{gapMessage}</span>}
-          <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps} title="Interroge Piwik Pro en direct, au rythme autorisé par votre limite d'appels -- peut prendre 1 à 2 minutes.">
-            {fillingGaps ? "Vérification… (jusqu'à 1-2 min)" : "Combler les trous de données"}
-          </button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {gapMessage && <span className="chart-note" style={{ margin: 0 }}>{gapMessage}</span>}
+            <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps} title="Interroge Piwik Pro en direct, au rythme autorisé par votre limite d'appels -- peut prendre 1 à 2 minutes.">
+              {fillingGaps ? "Vérification… (jusqu'à 1-2 min)" : "Combler les trous de données"}
+            </button>
+          </div>
+          <p className="chart-note" style={{ margin: 0, maxWidth: 420, textAlign: "right" }}>
+            Utile car ce service peut se mettre en veille (plan gratuit) et manquer la synchro automatique quotidienne --
+            ce bouton relance la récupération manuellement plutôt que d'attendre le prochain réveil.
+          </p>
         </div>
       </div>
 

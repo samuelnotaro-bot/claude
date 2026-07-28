@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 46 36" width="46" height="36" role="img" aria-label="Socomec">
-  <!-- Pictogramme (fanion) Socomec seul, sans wordmark, voir socomec-logo-white.svg pour le contexte -->
-  <polygon points="0,0 46,0 46,18 20,18 20,36 0,36" fill="#FFC72C"/>
-  <polygon points="20,18 46,18 46,36 20,36" fill="#00335C"/>
+<svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M2.63159 13.3809C10.9049 9.58394 19.0983 17.2891 27.3684 13.465V5.69412C19.0983 9.51828 10.9049 1.8131 2.63159 5.61004V13.3809Z" fill="#FFCC00"></path>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M19.7737 25.4659H27.3683V17.8712H19.7737V25.4659Z" fill="white"></path>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M2.63159 17.8713L19.7738 10.2766V17.8713L2.63159 25.4659V17.8713Z" fill="white"></path>
 </svg>
