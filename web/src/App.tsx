@@ -123,7 +123,7 @@ export function App() {
       <div className="app-shell">
         <header className="brand-bar">
           <div className="app-header">
-            <div className="product-lockup">
+            <div className="header-col-brand">
               <div className="product-lockup-row">
                 <span className="brand-pictogram-tile">
                   <img src="/socomec-pictogram.svg" alt="" className="brand-pictogram" />
@@ -139,9 +139,11 @@ export function App() {
                 AI-powered KPI interpretation.
               </div>
             </div>
-            <div className="header-controls">
-              <PeriodSelector />
-              <span className="mode-badge">mode : {mode}</span>
+            <div className="header-col-controls">
+              <div className="header-controls">
+                <PeriodSelector />
+                <span className="mode-badge">mode : {mode}</span>
+              </div>
             </div>
           </div>
         </header>

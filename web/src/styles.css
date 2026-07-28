@@ -156,11 +156,26 @@ body {
   padding: 18px 20px;
 }
 
+/* Deux colonnes fixes : marque à gauche, sélecteurs à droite -- jamais de wrap qui ferait retomber les sélecteurs à gauche. */
 .app-header {
   display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 20px;
+}
+
+.header-col-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.header-col-controls {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .app-header h1 {
@@ -170,12 +185,6 @@ body {
   color: #ffffff;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.product-lockup {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
 .product-lockup-row {
@@ -242,39 +251,35 @@ body {
 }
 
 .mode-badge {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--brand-yellow);
   border: 1.5px solid var(--brand-yellow);
   border-radius: 999px;
-  padding: 5px 11px;
+  padding: 4px 9px;
   white-space: nowrap;
 }
 
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  /* Reste ancré à droite même quand product-lockup passe sur 2 lignes et que
-     ce bloc est repoussé sur sa propre ligne (margin auto reste actif par
-     ligne dans un conteneur flex multi-lignes). */
-  margin-left: auto;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .period-select {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   color: var(--brand-navy);
   background: #ffffff;
   border: 2px solid transparent;
   border-radius: 999px;
-  padding: 8px 16px;
+  padding: 6px 12px;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
@@ -299,34 +304,34 @@ body {
 .period-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .custom-range {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   background: #ffffff;
   border-radius: 999px;
-  padding: 4px 6px 4px 14px;
+  padding: 3px 5px 3px 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .date-input {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 700;
   color: var(--brand-navy);
   background: transparent;
   border: none;
-  padding: 4px 2px;
+  padding: 3px 2px;
   color-scheme: light;
 }
 
 .range-sep {
   color: var(--brand-blue);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
 }
 
