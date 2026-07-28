@@ -51,21 +51,36 @@ export async function syncDay(date: string): Promise<{ ok: number; failed: numbe
   return { ok, failed };
 }
 
+// Falling back to the per-day loop only makes sense when that fallback stays
+// cheap: a wrong column id (or any other systematic failure) fails the exact
+// same way for every date in the range, so for a genuinely long range (the
+// 26-month deep-backfill) the "safe" fallback is actually the trap -- it
+// silently commits to potentially thousands of sequential rate-limited calls
+// per site, which looks indistinguishable from "stuck" for hours. Only fall
+// back for ranges short enough that the worst case is still fast.
+const MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK = 14;
+
 /**
  * Fetches+stores one site's whole [dateFrom, dateTo] range in a handful of
  * batched Piwik Pro requests (see metrics.fetchMetricsRange). Falls back to
- * the proven per-day loop (syncSiteDate for each date) if the batch fails for
- * any reason -- a wrong column id, a transient API error, anything -- so a
- * bad assumption in the batching code degrades to "no speed-up" rather than
- * "this site's history silently doesn't sync."
+ * the proven per-day loop only for short ranges (see
+ * MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK) -- for a longer range, a batch
+ * failure is reported immediately instead, with the real Piwik Pro error, so
+ * a bad assumption in the batching code (e.g. a wrong column id) surfaces
+ * fast rather than turning into a multi-hour silent fallback.
  */
-async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number }> {
+async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number; batchError?: string }> {
   try {
     const days = await fetchMetricsRange(site.id, dateFrom, dateTo);
     for (const day of days) await upsertSnapshot(day);
     return { ok: days.length, failed: 0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const rangeDays = daysBetweenInclusive(dateFrom, dateTo);
+    if (rangeDays > MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK) {
+      console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo} (${rangeDays} days) -- too long to fall back per-day, reporting failure: ${message}`);
+      return { ok: 0, failed: rangeDays, batchError: message };
+    }
     console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo}, falling back to per-day fetch: ${message}`);
   }
   let ok = 0;
@@ -89,11 +104,12 @@ export async function syncDateRange(
   dateFrom: string,
   dateTo: string,
   onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
-): Promise<{ ok: number; failed: number }> {
+): Promise<{ ok: number; failed: number; batchError?: string }> {
   const sites = await getSites();
   let ok = 0;
   let failed = 0;
   let done = 0;
+  let batchError: string | undefined;
   for (let i = 0; i < sites.length; i += CONCURRENCY) {
     const batch = sites.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map((site) => syncSiteRange(site, dateFrom, dateTo)));
@@ -101,10 +117,11 @@ export async function syncDateRange(
       ok += r.ok;
       failed += r.failed;
       done++;
+      if (r.batchError && !batchError) batchError = r.batchError;
     }
     onSiteProgress?.(done, sites.length);
   }
-  return { ok, failed };
+  return { ok, failed, batchError };
 }
 
 // Upper bound on how many (site, day) fetches a single gap-fill run performs.
@@ -222,6 +239,8 @@ export interface ExtendHistoryResult {
   daysAdded: number;
   ok: number;
   failed: number;
+  /** Real Piwik Pro error from the first failed range batch, if any -- see MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK. */
+  batchError?: string;
 }
 
 /**
@@ -254,6 +273,6 @@ export async function extendHistoryToRetentionFloor(
   console.log(`[sync] extending history back to the retention floor: ${dateFrom} -> ${dateTo} (${daysBetweenInclusive(dateFrom, dateTo)} day(s), batched by date range)...`);
   const result = await syncDateRange(dateFrom, dateTo, onSiteProgress);
   clearCache();
-  console.log(`[sync] history extension done: ${result.ok} (site, day) pair(s) filled, ${result.failed} failed.`);
-  return { extended: true, dateFrom, dateTo, daysAdded: daysBetweenInclusive(dateFrom, dateTo), ok: result.ok, failed: result.failed };
+  console.log(`[sync] history extension done: ${result.ok} (site, day) pair(s) filled, ${result.failed} failed.${result.batchError ? ` First batch error: ${result.batchError}` : ""}`);
+  return { extended: true, dateFrom, dateTo, daysAdded: daysBetweenInclusive(dateFrom, dateTo), ok: result.ok, failed: result.failed, batchError: result.batchError };
 }

@@ -268,6 +268,7 @@ export interface DeepBackfillResult {
   daysAdded: number;
   ok: number;
   failed: number;
+  batchError?: string;
 }
 
 export interface DeepBackfillStartResponse {

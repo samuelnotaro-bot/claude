@@ -5,6 +5,7 @@ export interface DeepBackfillResultSummary {
   daysAdded: number;
   ok: number;
   failed: number;
+  batchError?: string;
 }
 
 export interface DeepBackfillStatus {

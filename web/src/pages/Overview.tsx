@@ -93,6 +93,7 @@ export function Overview() {
         setDeepBackfillMessage(
           `${r.dateFrom} → ${r.dateTo} récupéré (${r.daysAdded} jour(s))` +
             (r.failed > 0 ? ` -- ${r.failed} échec(s) Piwik Pro, relancez pour réessayer` : "") +
+            (r.batchError ? ` -- erreur Piwik Pro : ${r.batchError}` : "") +
             "."
         );
       }
