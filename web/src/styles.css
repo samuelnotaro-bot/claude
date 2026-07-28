@@ -95,8 +95,24 @@ body {
 }
 
 .brand-bar {
-  background: var(--brand-navy);
+  position: relative;
+  overflow: hidden;
+  background-color: var(--brand-navy);
+  background-image:
+    radial-gradient(circle at 88% 12%, rgba(0, 120, 191, 0.55) 0%, transparent 42%),
+    radial-gradient(circle at 8% 95%, rgba(255, 199, 44, 0.14) 0%, transparent 38%),
+    linear-gradient(120deg, var(--brand-navy) 0%, #012f52 48%, var(--brand-blue) 145%);
   border-bottom: 3px solid var(--brand-blue);
+}
+
+/* Faint data-point grid over the gradient -- evokes analytics without being loud. */
+.brand-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.09) 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
 }
 
 .app {
@@ -106,6 +122,7 @@ body {
 }
 
 .brand-bar .app-header {
+  position: relative;
   max-width: 1280px;
   margin: 0 auto;
   padding: 18px 20px;
@@ -128,24 +145,68 @@ body {
   letter-spacing: 0.04em;
 }
 
-.brand-logo {
+.product-lockup {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.brand-pictogram {
   display: block;
-  height: 34px;
+  height: 38px;
   width: auto;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.product-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.product-name-mk {
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--brand-yellow);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.product-name-tool {
+  font-size: 19px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.product-version {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand-navy);
+  background: var(--brand-yellow);
+  border-radius: 999px;
+  padding: 2px 9px;
+  letter-spacing: 0.03em;
 }
 
 .app-header .subtitle {
   color: rgba(255, 255, 255, 0.72);
-  font-size: 13px;
+  font-size: 12.5px;
+  line-height: 1.45;
   margin-top: 6px;
+  max-width: 560px;
 }
 
 .mode-badge {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--brand-yellow);
+  border: 1.5px solid var(--brand-yellow);
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 5px 11px;
   white-space: nowrap;
 }
 
@@ -158,17 +219,34 @@ body {
 
 .period-select {
   font-family: inherit;
-  font-size: 13px;
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
-  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--brand-navy);
+  background: #ffffff;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  padding: 8px 16px;
   cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.period-select:hover {
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+
+.period-select:focus-visible {
+  outline: none;
+  border-color: var(--brand-yellow);
 }
 
 .period-select option {
   color: var(--text-primary);
+  font-weight: 400;
+  text-transform: none;
 }
 
 .period-controls {
@@ -182,22 +260,27 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  background: #ffffff;
+  border-radius: 999px;
+  padding: 4px 6px 4px 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .date-input {
   font-family: inherit;
-  font-size: 13px;
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
-  padding: 5px 8px;
-  color-scheme: dark;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand-navy);
+  background: transparent;
+  border: none;
+  padding: 4px 2px;
+  color-scheme: light;
 }
 
 .range-sep {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 12px;
+  color: var(--brand-blue);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .tabs {

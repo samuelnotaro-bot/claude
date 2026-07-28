@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 46 36" width="46" height="36" role="img" aria-label="Socomec">
+  <!-- Pictogramme (fanion) Socomec seul, sans wordmark, voir socomec-logo-white.svg pour le contexte -->
+  <polygon points="0,0 46,0 46,18 20,18 20,36 0,36" fill="#FFC72C"/>
+  <polygon points="20,18 46,18 46,36 20,36" fill="#00335C"/>
+</svg>

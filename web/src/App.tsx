@@ -123,10 +123,19 @@ export function App() {
       <div className="app-shell">
         <header className="brand-bar">
           <div className="app-header">
-            <div>
-              {/* Recréation approximative du logo Socomec (pas le fichier vectoriel officiel) -- à remplacer par web/public/socomec-logo-white.svg dès que le vrai fichier est fourni. */}
-              <img src="/socomec-logo-white.svg" alt="Socomec — Innovative Power Solutions" className="brand-logo" />
-              <div className="subtitle">Performance digitale — trafic et conversions, sites à extension pays, par région</div>
+            <div className="product-lockup">
+              <img src="/socomec-pictogram.svg" alt="" className="brand-pictogram" />
+              <div>
+                <div className="product-name">
+                  <span className="product-name-mk">MKWEB</span>
+                  <span className="product-name-tool">Piwik Pro Analyzer</span>
+                  <span className="product-version">V1.0</span>
+                </div>
+                <div className="subtitle">
+                  Empowering data-driven organizations to unlock actionable intelligence and accelerate performance through
+                  AI-powered KPI interpretation.
+                </div>
+              </div>
             </div>
             <div className="header-controls">
               <PeriodSelector />

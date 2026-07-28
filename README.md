@@ -363,25 +363,33 @@ métriques concernées plutôt que documenté seulement ici :
   une note l'explique.
 
 Par ailleurs, **votre compte Piwik Pro ne conserve pas plus de
-`PIWIK_DATA_RETENTION_DAYS` jours d'historique** (60 par défaut -- ajustez
-selon votre contrat Piwik Pro réel) : toute comparaison nécessitant de
-remonter plus loin (période personnalisée longue, préréglages 90/365 jours
-avec comparaison à la période précédente, ou toute comparaison "à l'année
-précédente") affiche "—" avec un message explicite plutôt qu'un delta -- ce
-n'est pas une absence de variation, c'est l'absence de donnée pour la
-comparer. Le bandeau distingue explicitement ce cas (`retentionLimited`,
-impossible à combler) d'un simple trou de synchronisation (`historyOk` faux
-mais comparaison théoriquement disponible -- comblable via "Combler les
-trous de données"), pour ne jamais laisser croire qu'un bouton peut résoudre
-une limite de rétention Piwik Pro.
+`PIWIK_DATA_RETENTION_DAYS` jours d'historique** (791 jours par défaut, soit
+26 mois -- ajustez selon votre contrat Piwik Pro réel) : toute comparaison
+nécessitant de remonter plus loin que ça affiche "—" avec un message
+explicite plutôt qu'un delta -- ce n'est pas une absence de variation, c'est
+l'absence de donnée pour la comparer. Le bandeau distingue explicitement ce
+cas (`retentionLimited`, impossible à combler) d'un simple trou de
+synchronisation (`historyOk` faux mais comparaison théoriquement disponible
+-- comblable via "Combler les trous de données"), pour ne jamais laisser
+croire qu'un bouton peut résoudre une limite de rétention Piwik Pro.
 
-`server/src/sync.ts#backfillGaps` applique la même limite : les jours
-manquants plus vieux que `PIWIK_DATA_RETENTION_DAYS` ne sont **jamais**
-retentés (Piwik Pro ne les renverra plus) et sont comptés séparément
-(`daysOutOfRetention`) plutôt que de gaspiller le budget d'appels Piwik Pro
-limité (voir plus bas) sur des dates qui échoueraient indéfiniment. Alignez
-aussi `BACKFILL_DAYS` sur cette même limite (au lieu de la valeur par défaut
-de 90) pour la même raison au premier démarrage.
+**Important** : cette limite de 26 mois est celle de Piwik Pro, pas celle de
+ce qui est actuellement stocké dans la base Postgres locale de l'app.
+`BACKFILL_DAYS` (90 par défaut) ne récupère que les 90 derniers jours au
+premier démarrage -- pour remonter plus loin (jusqu'aux 26 mois que Piwik Pro
+conserve réellement), il faut soit augmenter `BACKFILL_DAYS`, soit relancer
+un backfill ciblé sur une plage plus ancienne. À l'architecture actuelle
+(une requête par site et par jour), remonter 26 mois en arrière sur ~20 sites
+représente un volume d'appels Piwik Pro très important au régime du rate
+limit (voir plus bas) -- un backfill par plage de dates en un seul appel
+(plutôt que jour par jour) réduirait ce volume de façon importante mais n'est
+pas encore implémenté.
+
+`server/src/sync.ts#backfillGaps` applique la limite de rétention à son
+scan : les jours manquants plus vieux que `PIWIK_DATA_RETENTION_DAYS` ne sont
+**jamais** retentés (Piwik Pro ne les renverra plus) et sont comptés
+séparément (`daysOutOfRetention`) plutôt que de gaspiller le budget d'appels
+Piwik Pro limité sur des dates qui échoueraient indéfiniment.
 
 ## Explication des variations ("pourquoi ce chiffre a bougé")
 
