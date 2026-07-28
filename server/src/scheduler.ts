@@ -13,9 +13,9 @@ export function startScheduler(): void {
       await syncSiteRegistry();
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      await syncDay(yesterday.toISOString().slice(0, 10));
+      const { ok, failed } = await syncDay(yesterday.toISOString().slice(0, 10));
       clearCache();
-      console.log("[scheduler] daily fetch done.");
+      console.log(`[scheduler] daily fetch done: ${ok} site(s) ok, ${failed} failed (will be picked up by the gap-fill on next boot).`);
     } catch (err) {
       console.error("[scheduler] daily fetch failed:", err);
     }

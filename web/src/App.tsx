@@ -20,6 +20,13 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+const DEFAULT_TAB: TabId = "overview";
+
+function tabFromHash(): TabId {
+  const id = window.location.hash.replace(/^#\/?/, "");
+  return (TABS.find((t) => t.id === id)?.id ?? DEFAULT_TAB) as TabId;
+}
+
 function PeriodSelector() {
   const { mode, presetDays, customFrom, customTo, compare, setPresetDays, setCustomRange, setCompare } = usePeriod();
 
@@ -82,12 +89,34 @@ function PeriodSelector() {
 }
 
 export function App() {
-  const [tab, setTab] = useState<TabId>("overview");
+  // Tab is reflected in the URL hash (#/overview, #/regions, ...) so each tab
+  // has its own shareable link -- no server-side route config needed, since
+  // the browser never sends the #fragment to the server (it always requests
+  // just "/", which staticWeb.ts already serves index.html for).
+  const [tab, setTabState] = useState<TabId>(tabFromHash);
   const [mode, setMode] = useState<string>("…");
 
   useEffect(() => {
     api.health().then((h) => setMode(h.mode)).catch(() => setMode("?"));
   }, []);
+
+  useEffect(() => {
+    // Normalize a bare "/" into "/#/overview" on first load, so the default
+    // tab also has a real shareable link instead of only gaining one once
+    // the user clicks a tab. replaceState avoids adding a spurious history entry.
+    if (!window.location.hash) {
+      history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/${tab}`);
+    }
+    const onHashChange = () => setTabState(tabFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function setTab(next: TabId) {
+    setTabState(next);
+    window.location.hash = `/${next}`;
+  }
 
   return (
     <PeriodProvider>

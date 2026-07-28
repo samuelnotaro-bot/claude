@@ -257,6 +257,11 @@ précédente** (même durée, immédiatement avant) ou à **l'année précédent
 (mêmes dates, un an plus tôt). Tous les onglets (vue d'ensemble, régions,
 sites) suivent cette sélection.
 
+Chaque onglet a sa propre URL (`#/overview`, `#/regions`, `#/sites`,
+`#/localisation`, `#/bots`, `#/synthesis`) pour un partage direct d'un lien
+vers un onglet précis -- pas la période sélectionnée pour l'instant, qui
+reste un état local du navigateur.
+
 Le calcul de variation (`server/src/period.ts`) ne se fie plus au nombre de
 lignes renvoyées par la base (fragile : un seul jour de synchronisation manqué
 suffisait à faire disparaître la comparaison) mais à une série **complétée par
@@ -264,6 +269,39 @@ des zéros** sur toute la période demandée (`trends.zeroFillDayPoints`) combin
 à la date de la toute première donnée collectée : la comparaison n'est
 affichée que si l'historique remonte réellement assez loin, pas si un jour
 isolé manque.
+
+## Explication des variations ("pourquoi ce chiffre a bougé")
+
+Pour une variation significative au niveau global ou d'une région business
+(ex. "taux de conversion en baisse de 12%"), `explainFinding`
+(`server/src/routes/api.ts`) identifie les sites qui y contribuent le plus :
+pour une métrique de type taux (taux de conversion, signal bot), les sites
+sont classés par leur propre variation en points ; pour une métrique de
+volume (sessions, conversions, devis, ...), par leur propre variation en
+valeur absolue, dans la même unité que l'agrégat. Les sites en dessous de 200
+sessions sur la période sont ignorés (trop peu de volume pour être une
+explication fiable). Le résultat s'affiche comme sous-ligne sous le
+constat ("Principal(aux) contributeur(s) : socomec.de (-2.6 pt, -72%), ...")
+dans les panneaux "Analyse & plan d'action" (vue d'ensemble et régions).
+
+**Limite connue** : décomposition à un seul niveau (site le plus contributeur),
+pas une analyse causale complète -- ça répond à "quel site" plutôt qu'à
+"quelle action précise sur ce site l'explique" (à investiguer manuellement à
+partir du site nommé).
+
+## Fiabilité de la synchronisation (résilience aux erreurs Piwik Pro)
+
+Avant ce correctif, une seule erreur API transitoire (limite de débit,
+coupure réseau, un site mal configuré) sur un site suffisait à interrompre
+**tout le reste** du lot en cours (`Promise.all` rejette dès le premier
+échec) -- sur ~20 sites, ça voulait dire que les sites suivants dans le lot
+n'étaient jamais synchronisés ce jour-là, silencieusement. C'est la cause la
+plus probable de trous récurrents malgré le rattrapage. `server/src/sync.ts`
+isole maintenant chaque couple (site, jour) : un échec est loggé et
+comptabilisé (`daysFailed` dans la réponse de `POST /api/data/fill-gaps`,
+visible dans le message affiché par le bouton "Combler les trous de
+données") mais n'empêche plus les autres sites/jours du même lot d'être
+traités.
 
 ## Fiabilité sur Render (démarrage et synchronisation)
 

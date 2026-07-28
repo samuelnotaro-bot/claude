@@ -18,8 +18,11 @@ export function FindingsList({ findings, emptyLabel = "Aucune tendance notable d
         <li key={i}>
           <span className="dot" style={{ background: f.direction === "up" ? "var(--good)" : "var(--critical)" }} />
           <span>
-            <strong>{f.entityName}</strong> — {f.label} {f.direction === "up" ? "↑" : "↓"} {formatPct(f.changePct)}
-            {f.detail && <span className="finding-detail"> ({CHANNEL_LABELS[f.detail] ?? f.detail})</span>}
+            <div>
+              <strong>{f.entityName}</strong> — {f.label} {f.direction === "up" ? "↑" : "↓"} {formatPct(f.changePct)}
+              {f.detail && <span className="finding-detail"> ({CHANNEL_LABELS[f.detail] ?? f.detail})</span>}
+            </div>
+            {f.explanation && <div className="finding-explanation">{f.explanation}</div>}
           </span>
         </li>
       ))}

@@ -68,6 +68,8 @@ export interface Finding {
   previous: number;
   impactScore: number;
   detail?: string;
+  /** "Why" -- which sites drove this change, when computable (region/global scope only). */
+  explanation?: string;
 }
 
 /** KPI fields shared by /api/overview, /api/regions and /api/sites/summary (see server/src/routes/api.ts withChanges()). Nullable fields mean "non disponible" (a Piwik query failed or the integration isn't configured), distinct from a confirmed 0. */
@@ -201,6 +203,7 @@ export interface GapFillResult {
   sitesWithGaps: number;
   daysFilled: number;
   daysRemaining: number;
+  daysFailed: number;
 }
 
 export interface OptionalMetricsDiagnostics {

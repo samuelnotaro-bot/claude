@@ -66,6 +66,8 @@ export interface Finding {
   previous: number;
   impactScore: number; // used to rank findings by significance
   detail?: string; // extra context, e.g. which channel shifted
+  /** "Why" -- which child entities (sites within a region/global finding) drove this change, when computable. See routes/api.ts#explainFinding. */
+  explanation?: string;
 }
 
 export const METRIC_LABELS: Record<FindingMetric, string> = {

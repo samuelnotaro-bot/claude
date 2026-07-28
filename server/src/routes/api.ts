@@ -182,6 +182,64 @@ const PERIOD_FINDING_METRICS: { key: keyof KpiTotals; metric: FindingMetric; min
   { key: "downloads", metric: "downloads", minAbsChangePct: 0.15 },
 ];
 
+interface ChildKpi {
+  name: string;
+  current: KpiTotals;
+  previous: KpiTotals;
+}
+
+// Below this volume, a child entity's own change is too noisy to name as "the reason" for the aggregate move.
+const MIN_SESSIONS_FOR_CONTRIBUTION = 200;
+const MAX_CONTRIBUTORS_NAMED = 2;
+
+function fmtRatioDelta(d: number): string {
+  return `${d >= 0 ? "+" : ""}${(d * 100).toFixed(1)} pt`;
+}
+function fmtVolumeDelta(d: number): string {
+  return `${d >= 0 ? "+" : ""}${Math.round(d)}`;
+}
+
+const RATIO_METRICS = new Set<FindingMetric>(["conversionRate", "lowEngagementShare"]);
+
+/**
+ * "Pourquoi ce chiffre a bougé" -- for a global/region-level finding, names
+ * the child sites whose own change contributed most, so "taux de conversion
+ * en baisse" isn't left as an unexplained number. Ratio metrics (conversion
+ * rate, low-engagement share) rank children by their own point-change;
+ * volume metrics (sessions, conversions, ...) rank by their own absolute
+ * change in the same unit as the aggregate. Sites below
+ * MIN_SESSIONS_FOR_CONTRIBUTION are excluded as too noisy to blame.
+ */
+function explainFinding(f: Finding, children: ChildKpi[]): string | undefined {
+  const key = PERIOD_FINDING_METRICS.find((m) => m.metric === f.metric)?.key;
+  if (!key) return undefined; // channelMix has no single KpiTotals key -- no per-child breakdown
+
+  const contributions = children
+    .filter((c) => c.current.sessions >= MIN_SESSIONS_FOR_CONTRIBUTION || c.previous.sessions >= MIN_SESSIONS_FOR_CONTRIBUTION)
+    .map((c) => {
+      const cur = c.current[key];
+      const prev = c.previous[key];
+      if (cur === null || prev === null) return null;
+      return { name: c.name, delta: cur - prev, pct: pctChange(cur, prev) };
+    })
+    .filter((c): c is { name: string; delta: number; pct: number | null } => c !== null);
+
+  const matching = contributions
+    .filter((c) => (f.direction === "down" ? c.delta < 0 : c.delta > 0))
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, MAX_CONTRIBUTORS_NAMED);
+
+  if (matching.length === 0) {
+    // No single child moves the same direction as the aggregate -- likely a
+    // broad-based shift (many small moves) rather than one clear driver.
+    return "Variation répartie sur plusieurs sites, sans contributeur unique dominant.";
+  }
+
+  const fmt = RATIO_METRICS.has(f.metric) ? fmtRatioDelta : fmtVolumeDelta;
+  const names = matching.map((c) => `${c.name} (${fmt(c.delta)}${c.pct !== null ? `, ${(c.pct * 100).toFixed(0)}%` : ""})`).join(", ");
+  return `Principal(aux) contributeur(s) : ${names}.`;
+}
+
 /**
  * Findings scoped to exactly the period/comparison the user selected, unlike
  * /api/findings (a fixed rolling 7-vs-7-day statistical view used only for
@@ -191,8 +249,19 @@ const PERIOD_FINDING_METRICS: { key: keyof KpiTotals; metric: FindingMetric; min
  * them. No z-score/baseline requirement (arbitrary custom periods don't
  * necessarily have 8 weeks of trailing history to compute one from) --  just
  * a minimum relative-change threshold per metric.
+ *
+ * `children`, when given (regions/global scope), lets each finding be
+ * explained ("why") by naming which child sites drove it -- see explainFinding.
  */
-function buildPeriodFindings(scope: Scope, entityId: string, entityName: string, current: KpiTotals, previous: KpiTotals, historyOk: boolean): Finding[] {
+function buildPeriodFindings(
+  scope: Scope,
+  entityId: string,
+  entityName: string,
+  current: KpiTotals,
+  previous: KpiTotals,
+  historyOk: boolean,
+  children?: ChildKpi[]
+): Finding[] {
   if (!historyOk) return [];
   const findings: Finding[] = [];
   for (const { key, metric, minAbsChangePct } of PERIOD_FINDING_METRICS) {
@@ -201,7 +270,7 @@ function buildPeriodFindings(scope: Scope, entityId: string, entityName: string,
     if (currentVal === null || previousVal === null) continue;
     const changePct = pctChange(currentVal, previousVal);
     if (changePct === null || Math.abs(changePct) < minAbsChangePct) continue;
-    findings.push({
+    const finding: Finding = {
       scope,
       entityId,
       entityName,
@@ -212,7 +281,9 @@ function buildPeriodFindings(scope: Scope, entityId: string, entityName: string,
       current: currentVal,
       previous: previousVal,
       impactScore: Math.abs(changePct) * Math.log10(Math.max(currentVal, previousVal, 1) + 1),
-    });
+    };
+    if (children && children.length > 0) finding.explanation = explainFinding(finding, children);
+    findings.push(finding);
   }
   return findings.sort((a, b) => b.impactScore - a.impactScore);
 }
@@ -270,6 +341,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         sites.map((s) => s.id),
         period
       );
+      const siteById = new Map(sites.map((s) => [s.id, s]));
       const result = [];
       for (const [region, siteIds] of byRegion) {
         const currentSeries = aggregateDayPointSeries(siteIds.map((id) => currentBySite.get(id) ?? []));
@@ -278,12 +350,17 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         const previous = totalsOf(compareSeries);
         const changes = withChanges(current, previous, historyOk);
         const excludedAnomalyDays = siteIds.reduce((a, id) => a + (excludedInCurrentBySite.get(id) ?? 0), 0);
+        const children: ChildKpi[] = siteIds.map((id) => ({
+          name: siteById.get(id)?.name ?? id,
+          current: totalsOf(currentBySite.get(id) ?? []),
+          previous: totalsOf(compareBySite.get(id) ?? []),
+        }));
         result.push({
           region,
           siteCount: siteIds.length,
           ...changes,
           excludedAnomalyDays,
-          findings: buildPeriodFindings("continent", region, region, current, previous, historyOk),
+          findings: buildPeriodFindings("continent", region, region, current, previous, historyOk, children),
         });
       }
       result.sort((a, b) => b.sessions - a.sessions);
@@ -308,7 +385,12 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const previous = totalsOf(compareSeries);
       const changes = withChanges(current, previous, historyOk);
       const excludedAnomalyDays = sites.reduce((a, s) => a + (excludedInCurrentBySite.get(s.id) ?? 0), 0);
-      const findings = buildPeriodFindings("global", "global", "Tous sites", current, previous, historyOk);
+      const globalChildren: ChildKpi[] = sites.map((s) => ({
+        name: s.name,
+        current: totalsOf(currentBySite.get(s.id) ?? []),
+        previous: totalsOf(compareBySite.get(s.id) ?? []),
+      }));
+      const findings = buildPeriodFindings("global", "global", "Tous sites", current, previous, historyOk, globalChildren);
 
       // Synthesis bullets generated on the fly for exactly this period (reuses
       // the same rule engine as the cron-generated weekly synthesis_history,

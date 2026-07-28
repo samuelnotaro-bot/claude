@@ -8,22 +8,46 @@ import { addDaysIso } from "./period.js";
 // enough to avoid tripping any API rate limit.
 const CONCURRENCY = 5;
 
-export async function syncDay(date: string): Promise<void> {
-  const sites = await getSites();
-  for (let i = 0; i < sites.length; i += CONCURRENCY) {
-    const batch = sites.slice(i, i + CONCURRENCY);
-    await Promise.all(
-      batch.map(async (site) => {
-        const metrics = await fetchDailyMetrics(site.id, date);
-        await upsertSnapshot(metrics);
-      })
-    );
+/**
+ * Fetches+stores one site/day. Never throws -- a transient Piwik Pro error
+ * (rate limit, network blip, one bad site/date combo) must not take down the
+ * rest of the batch it's running in. Returns whether it worked so the caller
+ * can report real failure counts instead of an all-or-nothing result.
+ */
+async function syncSiteDate(site: SiteRecord, date: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const metrics = await fetchDailyMetrics(site.id, date);
+    await upsertSnapshot(metrics);
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[sync] failed to fetch ${site.name}/${date}, skipping (will retry on next run): ${message}`);
+    return { ok: false, error: message };
   }
 }
 
-async function syncSiteDate(site: SiteRecord, date: string): Promise<void> {
-  const metrics = await fetchDailyMetrics(site.id, date);
-  await upsertSnapshot(metrics);
+/**
+ * Syncs one day for every site. Previously a single failing site aborted the
+ * whole day (Promise.all rejects on the first failure, and the `for` loop
+ * over concurrency batches stops there too) -- on a real Piwik Pro org with
+ * ~20 sites, one transient error meant every site *after* it in that day's
+ * run silently never got synced, which is how holes crept into the history.
+ * Each site/day is now isolated: a failure is logged and skipped, the rest
+ * of the batch and the rest of the day still run.
+ */
+export async function syncDay(date: string): Promise<{ ok: number; failed: number }> {
+  const sites = await getSites();
+  let ok = 0;
+  let failed = 0;
+  for (let i = 0; i < sites.length; i += CONCURRENCY) {
+    const batch = sites.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map((site) => syncSiteDate(site, date)));
+    for (const r of results) {
+      if (r.ok) ok++;
+      else failed++;
+    }
+  }
+  return { ok, failed };
 }
 
 // Upper bound on how many (site, day) fetches a single gap-fill run performs,
@@ -36,6 +60,8 @@ export interface GapFillResult {
   sitesWithGaps: number;
   daysFilled: number;
   daysRemaining: number;
+  /** Attempts that failed this run (transient Piwik Pro error) -- stay "missing" and get retried on the next run, see syncSiteDate. */
+  daysFailed: number;
 }
 
 /**
@@ -57,11 +83,12 @@ export interface GapFillResult {
  * waiting for the next wake-up.
  */
 export async function backfillGaps(): Promise<GapFillResult> {
+  const empty: GapFillResult = { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0, daysFailed: 0 };
   const [sites, earliest] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
-  if (sites.length === 0 || !earliest) return { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0 };
+  if (sites.length === 0 || !earliest) return empty;
 
   const yesterday = addDaysIso(new Date().toISOString().slice(0, 10), -1);
-  if (earliest > yesterday) return { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0 };
+  if (earliest > yesterday) return empty;
 
   const datesBySite = await getSnapshotDatesBySite(
     sites.map((s) => s.id),
@@ -83,23 +110,27 @@ export async function backfillGaps(): Promise<GapFillResult> {
     }
   }
 
-  if (totalMissing === 0) return { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0 };
+  if (totalMissing === 0) return empty;
 
   console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
 
   let filled = 0;
+  let failed = 0;
+  let attempted = 0;
   outer: for (const site of sites) {
     const missing = missingBySite.get(site.id);
     if (!missing) continue;
     for (const date of missing) {
-      if (filled >= MAX_GAP_FILLS_PER_RUN) break outer;
-      await syncSiteDate(site, date);
-      filled++;
+      if (attempted >= MAX_GAP_FILLS_PER_RUN) break outer;
+      attempted++;
+      const result = await syncSiteDate(site, date);
+      if (result.ok) filled++;
+      else failed++;
     }
   }
 
   if (filled > 0) clearCache();
-  const remaining = totalMissing - filled;
-  console.log(`[sync] gap fill done: ${filled} day(s) filled, ${remaining} still remaining (will continue on next run).`);
-  return { sitesWithGaps: missingBySite.size, daysFilled: filled, daysRemaining: remaining };
+  const remaining = totalMissing - filled - failed;
+  console.log(`[sync] gap fill done: ${filled} day(s) filled, ${failed} failed (will retry), ${remaining} not yet attempted.`);
+  return { sitesWithGaps: missingBySite.size, daysFilled: filled, daysRemaining: remaining, daysFailed: failed };
 }

@@ -34,11 +34,15 @@ export function Overview() {
     setGapMessage(null);
     try {
       const result = await api.fillGaps();
-      setGapMessage(
-        result.daysFilled === 0
-          ? "Aucun trou détecté dans l'historique."
-          : `${result.daysFilled} jour(s) de données comblé(s)${result.daysRemaining > 0 ? ` (${result.daysRemaining} restant(s), relancez si besoin)` : ""}.`
-      );
+      const parts: string[] = [];
+      if (result.daysFilled === 0 && result.daysFailed === 0) {
+        parts.push("Aucun trou détecté dans l'historique.");
+      } else {
+        if (result.daysFilled > 0) parts.push(`${result.daysFilled} jour(s) comblé(s)`);
+        if (result.daysFailed > 0) parts.push(`${result.daysFailed} échec(s) Piwik Pro (relancez pour réessayer)`);
+        if (result.daysRemaining > 0) parts.push(`${result.daysRemaining} pas encore tenté(s), relancez`);
+      }
+      setGapMessage(parts.join(" · ") + ".");
       api.overview(queryParams).then(setOverview);
     } catch (e) {
       setGapMessage(`Échec : ${String(e)}`);
