@@ -5,7 +5,7 @@ import {
   getSnapshotDatesBySite,
   type SiteRecord,
 } from "./repo.js";
-import { fetchDailyMetrics, fetchMetricsRange } from "./metrics.js";
+import { fetchDailyMetrics } from "./metrics.js";
 import { clearCache } from "./cache.js";
 import { addDaysIso, daysBetweenInclusive } from "./period.js";
 import { config } from "./config.js";
@@ -57,38 +57,24 @@ export async function syncDay(date: string): Promise<{ ok: number; failed: numbe
   return { ok, failed };
 }
 
-// Falling back to the per-day loop only makes sense when that fallback stays
-// cheap: a wrong column id (or any other systematic failure) fails the exact
-// same way for every date in the range, so for a genuinely long range (the
-// 26-month deep-backfill) the "safe" fallback is actually the trap -- it
-// silently commits to potentially thousands of sequential rate-limited calls
-// per site, which looks indistinguishable from "stuck" for hours. Only fall
-// back for ranges short enough that the worst case is still fast.
-const MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK = 14;
-
 /**
- * Fetches+stores one site's whole [dateFrom, dateTo] range in a handful of
- * batched Piwik Pro requests (see metrics.fetchMetricsRange). Falls back to
- * the proven per-day loop only for short ranges (see
- * MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK) -- for a longer range, a batch
- * failure is reported immediately instead, with the real Piwik Pro error, so
- * a bad assumption in the batching code (e.g. a wrong column id) surfaces
- * fast rather than turning into a multi-hour silent fallback.
+ * Fetches+stores one site's whole [dateFrom, dateTo] range, one day at a
+ * time via the proven-safe per-day endpoint (see syncSiteDate).
+ *
+ * This used to call metrics.fetchMetricsRange, a batched range query built
+ * around a `timestamp`/`to_date` day-dimension column. That column forces
+ * Piwik Pro's Analytics Query API into event scope for the whole query
+ * (documented Piwik Pro behavior), which can silently distort session-scoped
+ * metrics like `sessions` -- real-world evidence: the dashboard's aggregate
+ * session count came in far below the native Piwik Pro UI for a comparable
+ * window, and a deep-backfill run appeared to overwrite a previously-correct
+ * day with a lower value. Per CLAUDE.md's priority ordering (data integrity
+ * above performance), the batched path is disabled here until that's proven
+ * safe -- slower, but every value written comes from the same per-day query
+ * already used by the daily cron and gap-fill, which does not need (and
+ * doesn't use) a day-dimension column at all.
  */
-async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number; batchError?: string }> {
-  try {
-    const days = await fetchMetricsRange(site.id, dateFrom, dateTo);
-    for (const day of days) await upsertSnapshot(day);
-    return { ok: days.length, failed: 0 };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const rangeDays = daysBetweenInclusive(dateFrom, dateTo);
-    if (rangeDays > MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK) {
-      console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo} (${rangeDays} days) -- too long to fall back per-day, reporting failure: ${message}`);
-      return { ok: 0, failed: rangeDays, batchError: message };
-    }
-    console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo}, falling back to per-day fetch: ${message}`);
-  }
+async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number }> {
   let ok = 0;
   let failed = 0;
   for (let d = dateFrom; d <= dateTo; d = addDaysIso(d, 1)) {
@@ -100,22 +86,21 @@ async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string)
 }
 
 /**
- * Same as syncDay but for a whole date range, one batched request set per
- * site instead of one per (site, day). onSiteProgress (optional) fires after
- * each concurrency batch of sites finishes -- used to drive a UI progress
- * bar for the deep-backfill route (see routes/api.ts), which can take a
- * couple of minutes against the real Piwik Pro API.
+ * Same as syncDay but for a whole date range, per-day fetches for every
+ * site. onSiteProgress (optional) fires after each concurrency batch of
+ * sites finishes -- used to drive a UI progress bar for the deep-backfill
+ * route (see routes/api.ts), which can take a while against the real Piwik
+ * Pro API for a long range.
  */
 export async function syncDateRange(
   dateFrom: string,
   dateTo: string,
   onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
-): Promise<{ ok: number; failed: number; batchError?: string }> {
+): Promise<{ ok: number; failed: number }> {
   const sites = await getSites();
   let ok = 0;
   let failed = 0;
   let done = 0;
-  let batchError: string | undefined;
   for (let i = 0; i < sites.length; i += CONCURRENCY) {
     const batch = sites.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map((site) => syncSiteRange(site, dateFrom, dateTo)));
@@ -123,11 +108,10 @@ export async function syncDateRange(
       ok += r.ok;
       failed += r.failed;
       done++;
-      if (r.batchError && !batchError) batchError = r.batchError;
     }
     onSiteProgress?.(done, sites.length);
   }
-  return { ok, failed, batchError };
+  return { ok, failed };
 }
 
 // Upper bound on how many (site, day) fetches a single gap-fill run performs.
@@ -291,8 +275,6 @@ export interface ExtendHistoryResult {
   sitesExtended: number;
   ok: number;
   failed: number;
-  /** Real Piwik Pro error from the first failed range batch, if any -- see MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK. */
-  batchError?: string;
 }
 
 /**
@@ -349,7 +331,6 @@ export async function extendHistoryToRetentionFloor(
   let ok = 0;
   let failed = 0;
   let done = 0;
-  let batchError: string | undefined;
   let latestDateTo = targets[0].dateTo;
   for (let i = 0; i < targets.length; i += CONCURRENCY) {
     const batch = targets.slice(i, i + CONCURRENCY);
@@ -359,7 +340,6 @@ export async function extendHistoryToRetentionFloor(
       ok += r.ok;
       failed += r.failed;
       done++;
-      if (r.batchError && !batchError) batchError = r.batchError;
       if (batch[j].dateTo > latestDateTo) latestDateTo = batch[j].dateTo;
     }
     // Clear after every batch, not just once at the very end -- the whole
@@ -372,7 +352,7 @@ export async function extendHistoryToRetentionFloor(
     onSiteProgress?.(done, targets.length);
   }
 
-  console.log(`[sync] history extension done: ${ok} (site, day) pair(s) filled across ${targets.length} site(s), ${failed} failed.${batchError ? ` First batch error: ${batchError}` : ""}`);
+  console.log(`[sync] history extension done: ${ok} (site, day) pair(s) filled across ${targets.length} site(s), ${failed} failed.`);
   return {
     extended: true,
     dateFrom: retentionFloor,
@@ -381,6 +361,5 @@ export async function extendHistoryToRetentionFloor(
     sitesExtended: targets.length,
     ok,
     failed,
-    batchError,
   };
 }
