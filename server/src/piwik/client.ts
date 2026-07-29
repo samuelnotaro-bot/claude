@@ -271,12 +271,23 @@ function splitIntoChunks(dateFrom: string, dateTo: string): Array<{ from: string
 
 async function queryAnalyticsRange(body: Record<string, unknown>, dateFrom: string, dateTo: string): Promise<QueryRow[]> {
   const chunks = splitIntoChunks(dateFrom, dateTo);
-  const chunkResults = await Promise.all(
+  // Sequential, not Promise.all -- a full 26-month range is ~27 chunks, and
+  // with 7 query types x up to 5 concurrent sites (see CONCURRENCY in
+  // sync.ts), firing every chunk at once would open ~950 pending requests
+  // simultaneously. They all funnel through the same rate limiter anyway
+  // (no real throughput gained by racing them), but that many concurrent
+  // pending fetches is a plausible source of memory pressure on a
+  // constrained instance -- matching a real-world observation of the deep
+  // backfill process restarting from scratch every 10-60 minutes instead of
+  // running to completion, consistent with the process crashing and Render
+  // auto-restarting it rather than a clean finish.
+  const rows: QueryRow[] = [];
+  for (const c of chunks) {
     // "bulk" priority: see BULK_SHARE_OF_LIMIT -- this is the deep-backfill
     // path, it must never be able to starve the daily cron/on-demand calls.
-    chunks.map((c) => queryAnalytics({ ...body, date_from: c.from, date_to: c.to }, "bulk"))
-  );
-  const rows = chunkResults.flat();
+    const chunkRows = await queryAnalytics({ ...body, date_from: c.from, date_to: c.to }, "bulk");
+    rows.push(...chunkRows);
+  }
   if (rows.length > chunks.length * MAX_PLAUSIBLE_ROWS_PER_CHUNK) {
     throw new Error(
       `[piwik] range query returned ${rows.length} rows across ${chunks.length} chunk(s) of ${RANGE_CHUNK_DAYS} days -- ` +
