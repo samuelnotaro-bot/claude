@@ -16,16 +16,23 @@
 # every wake would pay for a full `npm install && npm run build` (a
 # minute-plus of dead time) for nothing.
 #
-# But a *real* deploy also reuses that same filesystem on this plan --
-# confirmed directly: dist/ (gitignored, so untouched by git checkout) can
-# survive across deploys, and a version of this script that only checked
-# "does dist/ exist" (not "is it still the latest commit's build") kept
-# serving stale compiled code after real deploys with new source on disk --
-# new routes 404ing, bug fixes not taking effect, no error, just silently
-# running the previous commit indefinitely. Stamping the built commit SHA and
-# comparing it against the checked-out one on every start closes that gap:
-# a real deploy (new commit) always rebuilds, a mere wake-from-sleep (same
-# commit, same disk) never does.
+# A *real* deploy also reuses that same filesystem on this plan -- confirmed
+# directly: dist/ (gitignored, so untouched by git checkout) can survive
+# across deploys, and a version of this script that only checked "does dist/
+# exist" (not "is it still the latest commit's build") kept serving stale
+# compiled code after real deploys with new source on disk. Stamping the
+# built commit SHA and comparing it against the checked-out one on every
+# start closes that gap: a real deploy (new commit) rebuilds, a mere
+# wake-from-sleep (same commit, same disk) doesn't.
+#
+# CRITICAL: the rebuild itself must never be allowed to take the whole
+# service down. Confirmed directly -- once this script started actually
+# triggering rebuilds (instead of always skipping them, the previous bug),
+# a rebuild failure under `set -e` killed the deploy outright ("exited with
+# status 2"), which is a strictly worse outcome than the stale-build bug it
+# replaced: at least stale code was a running service. If the rebuild fails
+# and a previous build is still on disk, fall back to starting that instead
+# of exiting -- possibly-stale-but-serving beats not serving at all.
 set -e
 BUILT_COMMIT_FILE=dist/.build-commit
 CURRENT_COMMIT=$(git -C .. rev-parse HEAD 2>/dev/null || echo "no-git")
@@ -33,9 +40,16 @@ BUILT_COMMIT=$(cat "$BUILT_COMMIT_FILE" 2>/dev/null || echo "")
 
 if [ ! -d ../node_modules/pg ] || [ ! -f dist/index.js ] || [ ! -f ../web/dist/index.html ] || [ "$CURRENT_COMMIT" != "$BUILT_COMMIT" ]; then
   echo "[start] Reconstruction nécessaire (build absent, ou commit courant $CURRENT_COMMIT != dernier build $BUILT_COMMIT) -- installation et reconstruction (server + web) avant démarrage..."
-  (cd .. && npm install && npm run build)
-  mkdir -p dist
-  echo "$CURRENT_COMMIT" > "$BUILT_COMMIT_FILE"
+  if (cd .. && npm install --include=dev && npm run build); then
+    mkdir -p dist
+    echo "$CURRENT_COMMIT" > "$BUILT_COMMIT_FILE"
+    echo "[start] Reconstruction réussie."
+  elif [ -f dist/index.js ]; then
+    echo "[start] ÉCHEC de la reconstruction -- démarrage avec le build précédent en secours (potentiellement pas à jour) plutôt que d'arrêter le service. Voir les logs ci-dessus pour la cause réelle de l'échec."
+  else
+    echo "[start] ÉCHEC de la reconstruction et aucun build précédent disponible -- impossible de démarrer."
+    exit 1
+  fi
 else
   echo "[start] Build à jour pour le commit $CURRENT_COMMIT, démarrage direct (pas de reconstruction)."
 fi
