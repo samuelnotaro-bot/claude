@@ -33,7 +33,7 @@ import {
   updateDeepBackfillProgress,
   finishDeepBackfillStatus,
 } from "../deepBackfillStatus.js";
-import { probeOptionalMetrics } from "../piwik/client.js";
+import { probeOptionalMetrics, getDailyMetrics, getMetricsRange } from "../piwik/client.js";
 import { getBackfillStatus } from "../backfillStatus.js";
 import { config } from "../config.js";
 import type { Continent } from "../continent.js";
@@ -850,5 +850,39 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     if (sites.length === 0) return reply.code(404).send({ error: "No tracked sites." });
     const yesterday = addDaysIso(new Date().toISOString().slice(0, 10), -1);
     return probeOptionalMetrics(sites[0].id, sites[0].name, yesterday);
+  });
+
+  // Compares getDailyMetrics (single date_from=date_to=day, the proven path)
+  // against getMetricsRange for that SAME single day (the batched path used
+  // by the deep-backfill, which adds a day-breakdown dimension to the
+  // query). Exists to answer a specific, serious question raised directly:
+  // does adding that dimension change how Piwik Pro computes "sessions"
+  // (a session-scoped metric) -- e.g. by forcing the whole query into event
+  // scope, per Piwik Pro's own documented column-scope rules -- rather than
+  // just affecting which dates come back. If the two sides disagree, the
+  // batched path is producing wrong totals, not just an incomplete date
+  // range, and must stop being used for anything until that's resolved.
+  app.get("/api/diagnostics/range-vs-daily", async (_req, reply) => {
+    if (config.mode !== "live") {
+      return reply.code(400).send({ error: "Diagnostics only meaningful in PIWIK_MODE=live." });
+    }
+    const sites = await getSites();
+    if (sites.length === 0) return reply.code(404).send({ error: "No tracked sites." });
+    const site = sites[0];
+    const yesterday = addDaysIso(new Date().toISOString().slice(0, 10), -1);
+    try {
+      const [daily, range] = await Promise.all([getDailyMetrics(site.id, yesterday), getMetricsRange(site.id, yesterday, yesterday)]);
+      const rangeDay = range[0];
+      return {
+        siteId: site.id,
+        siteName: site.name,
+        date: yesterday,
+        daily: { sessions: daily.sessions, pageviews: daily.pageviews, users: daily.users },
+        range: rangeDay ? { sessions: rangeDay.sessions, pageviews: rangeDay.pageviews, users: rangeDay.users } : null,
+        sessionsMatch: rangeDay ? daily.sessions === rangeDay.sessions : false,
+      };
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 }
