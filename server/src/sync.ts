@@ -164,13 +164,27 @@ export async function backfillGaps(): Promise<GapFillResult> {
   if (sites.length === 0) return empty;
 
   const today = new Date().toISOString().slice(0, 10);
+  const yesterdayForceSync = addDaysIso(today, -1);
 
-  // Always refresh today on top of the historical gap scan below -- today
-  // is a partial day (still accumulating sessions in Piwik Pro) and is
-  // never part of the [earliest, yesterday] gap-scan window, so without
-  // this it would only ever get updated once a day by the cron.
+  // Always refresh today AND yesterday on top of the historical gap scan
+  // below, unconditionally (not just when missing). Today is a partial day
+  // (still accumulating sessions in Piwik Pro); yesterday is included
+  // because the gap scan below only detects *missing* rows -- it can't
+  // catch a row that's present but wrong. That happened for real: the old
+  // batched range-fetch path (see syncSiteRange) could write a bad value
+  // for a day that already had a correct one, e.g. while extending a
+  // site's history back to the retention floor for a site with no prior
+  // data, whose target range ran all the way up to yesterday. The batched
+  // path is now disabled, but any bad value it already wrote stays wrong
+  // until something re-fetches that exact day -- otherwise that's stuck
+  // waiting for tomorrow's cron (see scheduler.ts, which does the same
+  // yesterday+today refresh but only once a day). Forcing it here lets a
+  // manual "Combler les trous" click fix it immediately.
   const todayResult = await syncDay(today);
-  if (todayResult.ok > 0) clearCache();
+  const yesterdayResult = await syncDay(yesterdayForceSync);
+  if (todayResult.ok > 0 || yesterdayResult.ok > 0) clearCache();
+  const forcedOk = todayResult.ok + yesterdayResult.ok;
+  const forcedFailed = todayResult.failed + yesterdayResult.failed;
 
   // Per-site earliest, not a single global MIN(date) -- once
   // extendHistoryToRetentionFloor has pushed some sites' history back to
@@ -181,7 +195,7 @@ export async function backfillGaps(): Promise<GapFillResult> {
   // urgent gap on another site is ever reached.
   const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
   const sitesWithHistory = sites.filter((s) => earliestBySite.get(s.id));
-  if (sitesWithHistory.length === 0) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
+  if (sitesWithHistory.length === 0) return { ...empty, daysFilled: forcedOk, daysFailed: forcedFailed };
 
   const yesterday = addDaysIso(today, -1);
   const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
@@ -190,7 +204,7 @@ export async function backfillGaps(): Promise<GapFillResult> {
     const e = earliestBySite.get(site.id)!;
     if (e < overallEarliest) overallEarliest = e;
   }
-  if (overallEarliest > yesterday) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
+  if (overallEarliest > yesterday) return { ...empty, daysFilled: forcedOk, daysFailed: forcedFailed };
 
   // One presence lookup covering every site's range at once (cheap local
   // DB read, not rate-limited Piwik Pro calls) -- each site's own scan
@@ -224,7 +238,7 @@ export async function backfillGaps(): Promise<GapFillResult> {
     }
   }
 
-  if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
+  if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention, daysFilled: forcedOk, daysFailed: forcedFailed };
 
   console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) within the ${config.piwikDataRetentionDays}-day retention window (+${outOfRetention} unfillable, out of retention); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
 
@@ -260,9 +274,9 @@ export async function backfillGaps(): Promise<GapFillResult> {
   console.log(`[sync] gap fill done: ${filled} day(s) filled, ${failed} failed (will retry), ${remaining} not yet attempted, ${outOfRetention} out of retention (never fillable).`);
   return {
     sitesWithGaps: missingBySite.size,
-    daysFilled: filled + todayResult.ok,
+    daysFilled: filled + forcedOk,
     daysRemaining: remaining,
-    daysFailed: failed + todayResult.failed,
+    daysFailed: failed + forcedFailed,
     daysOutOfRetention: outOfRetention,
   };
 }
