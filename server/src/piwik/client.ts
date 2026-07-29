@@ -78,11 +78,39 @@ interface TokenCache {
 
 let tokenCache: TokenCache | null = null;
 
+// Plain fetch() has no timeout -- if Piwik Pro (or the network path to it on
+// Render) ever stalls mid-request instead of erroring, the call hangs
+// forever. That's not hypothetical: it's the exact symptom reported live --
+// a sync run visibly processes one site then never moves again, and stays
+// stuck on the same log line indefinitely. Every per-site fetch is already
+// wrapped in a try/catch that skips-and-retries-later on failure (see
+// sync.ts syncSiteDate), but that isolation only works if a stuck request
+// eventually *fails* -- an AbortController timeout is what makes it fail
+// instead of hanging the whole process (and everything awaiting behind it:
+// the rest of that concurrency batch, the rest of the sync run, the HTTP
+// route the user clicked, all of it) indefinitely.
+const FETCH_TIMEOUT_MS = 30_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Piwik Pro request timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getAccessToken(): Promise<string> {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 5_000) {
     return tokenCache.accessToken;
   }
-  const res = await fetch(`${config.piwik.baseUrl}/auth/token`, {
+  const res = await fetchWithTimeout(`${config.piwik.baseUrl}/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -150,7 +178,7 @@ async function piwikFetch<T>(pathAndQuery: string, init: RequestInit = {}, prior
   for (let attempt = 0; ; attempt++) {
     await waitForRateLimitSlot(priority);
     const token = await getAccessToken();
-    const res = await fetch(`${config.piwik.baseUrl}${pathAndQuery}`, {
+    const res = await fetchWithTimeout(`${config.piwik.baseUrl}${pathAndQuery}`, {
       ...init,
       headers: {
         ...init.headers,
