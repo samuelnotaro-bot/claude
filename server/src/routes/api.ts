@@ -823,8 +823,12 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     if (getDeepBackfillStatus().running) {
       return { alreadyRunning: true };
     }
-    const sites = await getSites();
-    startDeepBackfillStatus(sites.length);
+    // Total starts at 0 (unknown) rather than the full site count: only
+    // some sites may actually need extending, and extendHistoryToRetentionFloor
+    // reports the real total via its first progress callback almost
+    // immediately, before the client's first poll -- starting at "every
+    // site" would flash a misleadingly large total for no reason.
+    startDeepBackfillStatus(0);
     extendHistoryToRetentionFloor((done, total) => updateDeepBackfillProgress(done, total))
       .then((result) => finishDeepBackfillStatus(result))
       .catch((err) => finishDeepBackfillStatus(null, err instanceof Error ? err.message : String(err)));

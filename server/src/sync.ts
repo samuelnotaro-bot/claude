@@ -295,6 +295,12 @@ export async function extendHistoryToRetentionFloor(
   if (targets.length === 0) return empty;
 
   console.log(`[sync] extending history back to the retention floor for ${targets.length}/${sites.length} site(s) (each site's own gap, from ${retentionFloor})...`);
+  // Report the real total (sites that actually need work) right away --
+  // otherwise the caller's status tracker starts at sites.length (every
+  // site) and only corrects itself once the first batch finishes, which
+  // looks like the run "shrank" or stalled rather than simply reporting the
+  // true, smaller amount of work.
+  onSiteProgress?.(0, targets.length);
 
   let ok = 0;
   let failed = 0;

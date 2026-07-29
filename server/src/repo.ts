@@ -169,6 +169,17 @@ export async function getEarliestSnapshotDate(): Promise<string | null> {
  * amount of history (e.g. one site got a handful of very old rows from an
  * interrupted run while the rest didn't): it makes it look like "there's
  * nothing older to fetch" even though most sites still have a large gap.
+ *
+ * Only counts rows with sessions > 0 -- a row with 0 sessions is
+ * indistinguishable, just from its presence, between "Piwik Pro genuinely
+ * had zero traffic that day" and "a broken fetch (wrong column id, a range
+ * silently truncated by an unconfirmed pagination guess, ...) wrote a
+ * zero-filled placeholder for a day it never actually retrieved". Treating
+ * an all-zero range as "not really covered yet" means a site poisoned by an
+ * earlier bug gets correctly re-targeted and healed by the next extension
+ * run instead of being silently skipped forever because it already has
+ * *some* row that old.
+ *
  * Used by sync.ts#extendHistoryToRetentionFloor to extend each site's own
  * history independently instead of trusting a single shared earliest date.
  */
@@ -176,7 +187,7 @@ export async function getEarliestSnapshotDateBySite(siteIds: string[]): Promise<
   const byId = new Map<string, string | null>(siteIds.map((id) => [id, null]));
   if (siteIds.length === 0) return byId;
   const { rows } = await pool.query(
-    `SELECT site_id, MIN(date) AS earliest FROM site_snapshots WHERE site_id = ANY($1) GROUP BY site_id`,
+    `SELECT site_id, MIN(date) AS earliest FROM site_snapshots WHERE site_id = ANY($1) AND sessions > 0 GROUP BY site_id`,
     [siteIds]
   );
   for (const r of rows) {
