@@ -178,11 +178,21 @@ export interface GapFillResult {
 export async function backfillGaps(): Promise<GapFillResult> {
   const empty: GapFillResult = { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0, daysFailed: 0, daysOutOfRetention: 0 };
   const [sites, earliest] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
-  if (sites.length === 0 || !earliest) return empty;
+  if (sites.length === 0) return empty;
 
   const today = new Date().toISOString().slice(0, 10);
+
+  // Always refresh today on top of the historical gap scan below -- today
+  // is a partial day (still accumulating sessions in Piwik Pro) and is
+  // never part of the [earliest, yesterday] gap-scan window, so without
+  // this it would only ever get updated once a day by the cron.
+  const todayResult = await syncDay(today);
+  if (todayResult.ok > 0) clearCache();
+
+  if (!earliest) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
+
   const yesterday = addDaysIso(today, -1);
-  if (earliest > yesterday) return empty;
+  if (earliest > yesterday) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
 
   const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
 
@@ -214,7 +224,7 @@ export async function backfillGaps(): Promise<GapFillResult> {
     }
   }
 
-  if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention };
+  if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
 
   console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) within the ${config.piwikDataRetentionDays}-day retention window (+${outOfRetention} unfillable, out of retention); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
 
@@ -236,7 +246,13 @@ export async function backfillGaps(): Promise<GapFillResult> {
   if (filled > 0) clearCache();
   const remaining = totalMissing - filled - failed;
   console.log(`[sync] gap fill done: ${filled} day(s) filled, ${failed} failed (will retry), ${remaining} not yet attempted, ${outOfRetention} out of retention (never fillable).`);
-  return { sitesWithGaps: missingBySite.size, daysFilled: filled, daysRemaining: remaining, daysFailed: failed, daysOutOfRetention: outOfRetention };
+  return {
+    sitesWithGaps: missingBySite.size,
+    daysFilled: filled + todayResult.ok,
+    daysRemaining: remaining,
+    daysFailed: failed + todayResult.failed,
+    daysOutOfRetention: outOfRetention,
+  };
 }
 
 export interface ExtendHistoryResult {
@@ -318,10 +334,16 @@ export async function extendHistoryToRetentionFloor(
       if (r.batchError && !batchError) batchError = r.batchError;
       if (batch[j].dateTo > latestDateTo) latestDateTo = batch[j].dateTo;
     }
+    // Clear after every batch, not just once at the very end -- the whole
+    // run can take well over an hour, and only invalidating the cache on
+    // final completion meant newly-fetched data was already sitting in
+    // Postgres but invisible on the dashboard (still served from the
+    // pre-run cache) for the entire duration, making a genuinely working
+    // run look like nothing was happening.
+    clearCache();
     onSiteProgress?.(done, targets.length);
   }
 
-  clearCache();
   console.log(`[sync] history extension done: ${ok} (site, day) pair(s) filled across ${targets.length} site(s), ${failed} failed.${batchError ? ` First batch error: ${batchError}` : ""}`);
   return {
     extended: true,

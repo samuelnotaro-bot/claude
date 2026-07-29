@@ -11,11 +11,19 @@ export function startScheduler(): void {
     try {
       console.log("[scheduler] daily fetch starting...");
       await syncSiteRegistry();
-      const yesterday = new Date();
+      const today = new Date();
+      const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
-      const { ok, failed } = await syncDay(yesterday.toISOString().slice(0, 10));
+      const y = await syncDay(yesterday.toISOString().slice(0, 10));
+      // Also re-fetch today -- it's necessarily a partial day (still
+      // accumulating sessions in Piwik Pro), refreshed once here and again
+      // by the next run 24h later, but showing today's traffic so far is
+      // more useful than showing nothing for the current day at all.
+      const t = await syncDay(today.toISOString().slice(0, 10));
       clearCache();
-      console.log(`[scheduler] daily fetch done: ${ok} site(s) ok, ${failed} failed (will be picked up by the gap-fill on next boot).`);
+      console.log(
+        `[scheduler] daily fetch done: yesterday ${y.ok} ok/${y.failed} failed, today ${t.ok} ok/${t.failed} failed (today is partial, refreshed again tomorrow).`
+      );
     } catch (err) {
       console.error("[scheduler] daily fetch failed:", err);
     }
