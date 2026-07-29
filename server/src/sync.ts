@@ -141,6 +141,31 @@ export interface GapFillResult {
 }
 
 /**
+ * Unconditionally refreshes today AND yesterday for every site (not just
+ * when missing). Today is a partial day (still accumulating sessions in
+ * Piwik Pro); yesterday is included because the gap scan in
+ * scanAndFillGaps only detects *missing* rows -- it can't catch a row
+ * that's present but wrong. That happened for real: the old batched
+ * range-fetch path (see syncSiteRange) could write a bad value for a day
+ * that already had a correct one, e.g. while extending a site's history
+ * back to the retention floor for a site with no prior data, whose target
+ * range ran all the way up to yesterday. The batched path is now disabled,
+ * but any bad value it already wrote stays wrong until something re-fetches
+ * that exact day -- otherwise that's stuck waiting for tomorrow's cron (see
+ * scheduler.ts, which does the same yesterday+today refresh but only once a
+ * day). Forcing it here lets a manual "Combler les trous" click fix it
+ * immediately.
+ */
+async function forceResyncRecentDays(): Promise<{ ok: number; failed: number }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = addDaysIso(today, -1);
+  const todayResult = await syncDay(today);
+  const yesterdayResult = await syncDay(yesterday);
+  if (todayResult.ok > 0 || yesterdayResult.ok > 0) clearCache();
+  return { ok: todayResult.ok + yesterdayResult.ok, failed: todayResult.failed + yesterdayResult.failed };
+}
+
+/**
  * Finds every (site, date) pair missing between the earliest data on record
  * and yesterday -- not just a trailing "latest -> yesterday" range -- and
  * fetches those specific days for those specific sites.
@@ -154,37 +179,17 @@ export interface GapFillResult {
  * ("no data from July 1 to 19") and quietly wrecks period-over-period
  * comparisons (a window with a hole in it is not a fair comparison).
  *
- * Called once at boot (see index.ts) and available on demand via
- * POST /api/data/fill-gaps so a gap can be closed immediately instead of
- * waiting for the next wake-up.
+ * Caps itself at MAX_GAP_FILLS_PER_RUN (site, day) pairs -- see
+ * runGapFillLoop below for the multi-round wrapper that closes a gap larger
+ * than that in one background job instead of requiring several manual
+ * clicks.
  */
-export async function backfillGaps(): Promise<GapFillResult> {
+async function scanAndFillGaps(): Promise<GapFillResult> {
   const empty: GapFillResult = { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0, daysFailed: 0, daysOutOfRetention: 0 };
   const sites = await getSites();
   if (sites.length === 0) return empty;
 
   const today = new Date().toISOString().slice(0, 10);
-  const yesterdayForceSync = addDaysIso(today, -1);
-
-  // Always refresh today AND yesterday on top of the historical gap scan
-  // below, unconditionally (not just when missing). Today is a partial day
-  // (still accumulating sessions in Piwik Pro); yesterday is included
-  // because the gap scan below only detects *missing* rows -- it can't
-  // catch a row that's present but wrong. That happened for real: the old
-  // batched range-fetch path (see syncSiteRange) could write a bad value
-  // for a day that already had a correct one, e.g. while extending a
-  // site's history back to the retention floor for a site with no prior
-  // data, whose target range ran all the way up to yesterday. The batched
-  // path is now disabled, but any bad value it already wrote stays wrong
-  // until something re-fetches that exact day -- otherwise that's stuck
-  // waiting for tomorrow's cron (see scheduler.ts, which does the same
-  // yesterday+today refresh but only once a day). Forcing it here lets a
-  // manual "Combler les trous" click fix it immediately.
-  const todayResult = await syncDay(today);
-  const yesterdayResult = await syncDay(yesterdayForceSync);
-  if (todayResult.ok > 0 || yesterdayResult.ok > 0) clearCache();
-  const forcedOk = todayResult.ok + yesterdayResult.ok;
-  const forcedFailed = todayResult.failed + yesterdayResult.failed;
 
   // Per-site earliest, not a single global MIN(date) -- once
   // extendHistoryToRetentionFloor has pushed some sites' history back to
@@ -195,7 +200,7 @@ export async function backfillGaps(): Promise<GapFillResult> {
   // urgent gap on another site is ever reached.
   const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
   const sitesWithHistory = sites.filter((s) => earliestBySite.get(s.id));
-  if (sitesWithHistory.length === 0) return { ...empty, daysFilled: forcedOk, daysFailed: forcedFailed };
+  if (sitesWithHistory.length === 0) return empty;
 
   const yesterday = addDaysIso(today, -1);
   const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
@@ -204,7 +209,7 @@ export async function backfillGaps(): Promise<GapFillResult> {
     const e = earliestBySite.get(site.id)!;
     if (e < overallEarliest) overallEarliest = e;
   }
-  if (overallEarliest > yesterday) return { ...empty, daysFilled: forcedOk, daysFailed: forcedFailed };
+  if (overallEarliest > yesterday) return empty;
 
   // One presence lookup covering every site's range at once (cheap local
   // DB read, not rate-limited Piwik Pro calls) -- each site's own scan
@@ -238,7 +243,7 @@ export async function backfillGaps(): Promise<GapFillResult> {
     }
   }
 
-  if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention, daysFilled: forcedOk, daysFailed: forcedFailed };
+  if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention };
 
   console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) within the ${config.piwikDataRetentionDays}-day retention window (+${outOfRetention} unfillable, out of retention); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
 
@@ -274,11 +279,67 @@ export async function backfillGaps(): Promise<GapFillResult> {
   console.log(`[sync] gap fill done: ${filled} day(s) filled, ${failed} failed (will retry), ${remaining} not yet attempted, ${outOfRetention} out of retention (never fillable).`);
   return {
     sitesWithGaps: missingBySite.size,
-    daysFilled: filled + forcedOk,
+    daysFilled: filled,
     daysRemaining: remaining,
-    daysFailed: failed + forcedFailed,
+    daysFailed: failed,
     daysOutOfRetention: outOfRetention,
   };
+}
+
+/** Composes the forced today/yesterday refresh with the historical gap scan+fill -- see both for why each exists. Used standalone at boot (see index.ts); runGapFillLoop below calls the two halves separately to avoid repeating the forced refresh on every round. */
+export async function backfillGaps(): Promise<GapFillResult> {
+  const forced = await forceResyncRecentDays();
+  const scanned = await scanAndFillGaps();
+  return {
+    ...scanned,
+    daysFilled: scanned.daysFilled + forced.ok,
+    daysFailed: scanned.daysFailed + forced.failed,
+  };
+}
+
+// scanAndFillGaps caps itself to MAX_GAP_FILLS_PER_RUN per call (keeps a
+// single call fast/rate-limit-friendly), so closing a large multi-day,
+// multi-site outage needs several calls in a row. Asking a human to keep
+// clicking a button every couple of minutes until a counter hits zero is
+// exactly the kind of manual repetition CLAUDE.md says to avoid when it can
+// reasonably be automated -- so this loops scanAndFillGaps() itself, in the
+// background (see routes/api.ts, same fire-and-poll pattern as the
+// deep-backfill), until either every gap is filled/out-of-retention
+// (sitesWithGaps reaches 0) or the round cap below is hit.
+//
+// The forced today/yesterday refresh (see forceResyncRecentDays) runs once
+// up front, not once per round -- every site's forced refresh normally
+// succeeds on the first try, so repeating it each round would burn most of
+// the rate-limited API budget re-fetching days that are already correct
+// instead of on the actual gaps this loop exists to close.
+const MAX_GAP_FILL_ROUNDS = 50;
+
+export async function runGapFillLoop(onRoundProgress?: (round: number, cumulative: GapFillResult) => void): Promise<GapFillResult & { rounds: number }> {
+  const forced = await forceResyncRecentDays();
+  let cumulative: GapFillResult = { sitesWithGaps: 0, daysFilled: forced.ok, daysRemaining: 0, daysFailed: forced.failed, daysOutOfRetention: 0 };
+  onRoundProgress?.(0, cumulative);
+  let round = 0;
+  for (; round < MAX_GAP_FILL_ROUNDS; round++) {
+    const result = await scanAndFillGaps();
+    cumulative = {
+      sitesWithGaps: result.sitesWithGaps,
+      daysFilled: cumulative.daysFilled + result.daysFilled,
+      daysRemaining: result.daysRemaining,
+      daysFailed: cumulative.daysFailed + result.daysFailed,
+      daysOutOfRetention: result.daysOutOfRetention,
+    };
+    onRoundProgress?.(round + 1, cumulative);
+    // No sites left with a fillable gap (everything's either filled now or
+    // permanently out of Piwik Pro's retention) -- done, no point looping
+    // further.
+    if (result.sitesWithGaps === 0) break;
+    // Safety net: a round that filled nothing and failed nothing (while
+    // sites still report gaps) would otherwise spin forever without making
+    // progress -- shouldn't normally happen, but stop rather than burn the
+    // round budget uselessly if it does.
+    if (result.daysFilled === 0 && result.daysFailed === 0) break;
+  }
+  return { ...cumulative, rounds: round + 1 };
 }
 
 export interface ExtendHistoryResult {

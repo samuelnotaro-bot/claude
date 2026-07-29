@@ -27,9 +27,10 @@ export function Overview() {
       .catch((e) => setError(String(e)));
   }, [queryParams]);
 
-  // Resume polling on mount if a deep-backfill is already running server-side
-  // (e.g. the button was clicked, then the page got reloaded) -- it's a
-  // background job precisely so leaving/reloading the page doesn't lose it.
+  // Resume polling on mount if a job is already running server-side (e.g.
+  // the button was clicked, then the page got reloaded) -- both are
+  // background jobs precisely so leaving/reloading the page doesn't lose
+  // them or reset the button to its idle state.
   useEffect(() => {
     api.deepBackfillStatus().then((status) => {
       if (status.running) {
@@ -37,29 +38,67 @@ export function Overview() {
         pollDeepBackfillStatus();
       }
     });
+    api.fillGapsStatus().then((status) => {
+      if (status.running) {
+        setFillingGaps(true);
+        pollFillGapsStatus();
+      }
+    });
   }, []);
 
+  // A large multi-day, multi-site outage needs several rounds of backfillGaps
+  // to fully close (each round caps itself at MAX_GAP_FILLS_PER_RUN) --
+  // runGapFillLoop runs those rounds server-side in the background, so this
+  // polls its status instead of requiring a human to keep re-clicking the
+  // button every couple of minutes until it's done.
+  function pollFillGapsStatus() {
+    const check = async () => {
+      let status;
+      try {
+        status = await api.fillGapsStatus();
+      } catch {
+        setTimeout(check, 8000);
+        return;
+      }
+      if (status.running) {
+        const r = status.result;
+        setGapMessage(r ? `En cours… tour ${status.round}, ${r.daysFilled} jour(s) comblé(s) jusqu'ici.` : "En cours…");
+        setTimeout(check, 4000);
+        return;
+      }
+      setFillingGaps(false);
+      if (status.error) {
+        setGapMessage(`Échec : ${status.error}`);
+      } else {
+        const r = status.result;
+        const parts: string[] = [];
+        if (!r || (r.daysFilled === 0 && r.daysFailed === 0 && r.daysOutOfRetention === 0)) {
+          parts.push("Aucun trou détecté dans l'historique.");
+        } else {
+          if (r.daysFilled > 0) parts.push(`${r.daysFilled} jour(s) comblé(s) en ${r.rounds} tour(s)`);
+          if (r.daysFailed > 0) parts.push(`${r.daysFailed} échec(s) Piwik Pro (relancez pour réessayer)`);
+          if (r.daysRemaining > 0) parts.push(`${r.daysRemaining} pas encore tenté(s), relancez`);
+          if (r.daysOutOfRetention > 0)
+            parts.push(`${r.daysOutOfRetention} jour(s) hors de la période de rétention Piwik Pro -- ne seront jamais disponibles`);
+        }
+        setGapMessage(parts.join(" · ") + ".");
+      }
+      api.overview(queryParams).then(setOverview);
+    };
+    check();
+  }
+
   async function handleFillGaps() {
-    setFillingGaps(true);
     setGapMessage(null);
     try {
-      const result = await api.fillGaps();
-      const parts: string[] = [];
-      if (result.daysFilled === 0 && result.daysFailed === 0 && result.daysOutOfRetention === 0) {
-        parts.push("Aucun trou détecté dans l'historique.");
-      } else {
-        if (result.daysFilled > 0) parts.push(`${result.daysFilled} jour(s) comblé(s)`);
-        if (result.daysFailed > 0) parts.push(`${result.daysFailed} échec(s) Piwik Pro (relancez pour réessayer)`);
-        if (result.daysRemaining > 0) parts.push(`${result.daysRemaining} pas encore tenté(s), relancez`);
-        if (result.daysOutOfRetention > 0)
-          parts.push(`${result.daysOutOfRetention} jour(s) hors de la période de rétention Piwik Pro -- ne seront jamais disponibles`);
+      const res = await api.startFillGaps();
+      if (res.alreadyRunning) {
+        setGapMessage("Un comblement de trous est déjà en cours.");
       }
-      setGapMessage(parts.join(" · ") + ".");
-      api.overview(queryParams).then(setOverview);
+      setFillingGaps(true);
+      pollFillGapsStatus();
     } catch (e) {
       setGapMessage(`Échec : ${String(e)}`);
-    } finally {
-      setFillingGaps(false);
     }
   }
 
@@ -134,13 +173,14 @@ export function Overview() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {gapMessage && <span className="chart-note" style={{ margin: 0 }}>{gapMessage}</span>}
-            <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps} title="Interroge Piwik Pro en direct, au rythme autorisé par votre limite d'appels -- peut prendre 1 à 2 minutes.">
-              {fillingGaps ? "Vérification… (jusqu'à 1-2 min)" : "Combler les trous de données"}
+            <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps} title="Interroge Piwik Pro en direct, au rythme autorisé par votre limite d'appels -- tourne en arrière-plan jusqu'à ce que tout soit comblé, comptez plusieurs minutes pour un gros trou.">
+              {fillingGaps ? "Comblement en cours…" : "Combler les trous de données"}
             </button>
           </div>
           <p className="chart-note" style={{ margin: 0, maxWidth: 420, textAlign: "right" }}>
             Utile car ce service peut se mettre en veille (plan gratuit) et manquer la synchro automatique quotidienne --
-            ce bouton relance la récupération manuellement plutôt que d'attendre le prochain réveil.
+            ce bouton relance la récupération manuellement plutôt que d'attendre le prochain réveil. Tourne en
+            arrière-plan et reprend plusieurs tours tout seul jusqu'à ce que tout soit à jour.
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {deepBackfillMessage && <span className="chart-note" style={{ margin: 0 }}>{deepBackfillMessage}</span>}

@@ -26,13 +26,14 @@ import type { SiteRecord } from "../repo.js";
 import { flagAnomalies } from "../anomaly.js";
 import { checkGeoMismatches } from "../geoMismatch.js";
 import { computeBotSignal } from "../bots.js";
-import { backfillGaps, extendHistoryToRetentionFloor } from "../sync.js";
+import { runGapFillLoop, extendHistoryToRetentionFloor } from "../sync.js";
 import {
   getDeepBackfillStatus,
   startDeepBackfillStatus,
   updateDeepBackfillProgress,
   finishDeepBackfillStatus,
 } from "../deepBackfillStatus.js";
+import { getGapFillStatus, startGapFillStatus, updateGapFillProgress, finishGapFillStatus } from "../gapFillStatus.js";
 import { probeOptionalMetrics, getDailyMetrics, getMetricsRange } from "../piwik/client.js";
 import { getBackfillStatus } from "../backfillStatus.js";
 import { config } from "../config.js";
@@ -804,9 +805,25 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   // Manual trigger for the gap-scan backfill (see sync.ts#backfillGaps) so a
   // hole in the data (e.g. "no data July 1-19") can be closed on demand
   // instead of waiting for the next boot/wake-up.
+  //
+  // Runs in the background rather than blocking the request, same reasoning
+  // and same fire-and-poll pattern as deep-backfill below: a single
+  // backfillGaps() call caps itself at MAX_GAP_FILLS_PER_RUN, so a large
+  // multi-day, multi-site outage needs several rounds to fully close --
+  // runGapFillLoop() runs those rounds itself instead of requiring a human
+  // to keep re-clicking the button every couple of minutes.
   app.post("/api/data/fill-gaps", async () => {
-    return backfillGaps();
+    if (getGapFillStatus().running) {
+      return { alreadyRunning: true };
+    }
+    startGapFillStatus();
+    runGapFillLoop((round, cumulative) => updateGapFillProgress(round, { ...cumulative, rounds: round }))
+      .then((result) => finishGapFillStatus(result))
+      .catch((err) => finishGapFillStatus(null, err instanceof Error ? err.message : String(err)));
+    return { alreadyRunning: false };
   });
+
+  app.get("/api/data/fill-gaps/status", async () => getGapFillStatus());
 
   // Extends history *before* the current earliest snapshot, back to the
   // Piwik Pro retention floor (see sync.ts#extendHistoryToRetentionFloor) --
