@@ -5,7 +5,7 @@ import {
   getSnapshotDatesBySite,
   type SiteRecord,
 } from "./repo.js";
-import { fetchDailyMetrics } from "./metrics.js";
+import { fetchDailyMetrics, fetchMetricsRange } from "./metrics.js";
 import { clearCache } from "./cache.js";
 import { addDaysIso, daysBetweenInclusive } from "./period.js";
 import { config } from "./config.js";
@@ -57,24 +57,40 @@ export async function syncDay(date: string): Promise<{ ok: number; failed: numbe
   return { ok, failed };
 }
 
-/**
- * Fetches+stores one site's whole [dateFrom, dateTo] range, one day at a
- * time via the proven-safe per-day endpoint (see syncSiteDate).
- *
- * This used to call metrics.fetchMetricsRange, a batched range query built
- * around a `timestamp`/`to_date` day-dimension column. That column forces
- * Piwik Pro's Analytics Query API into event scope for the whole query
- * (documented Piwik Pro behavior), which can silently distort session-scoped
- * metrics like `sessions` -- real-world evidence: the dashboard's aggregate
- * session count came in far below the native Piwik Pro UI for a comparable
- * window, and a deep-backfill run appeared to overwrite a previously-correct
- * day with a lower value. Per CLAUDE.md's priority ordering (data integrity
- * above performance), the batched path is disabled here until that's proven
- * safe -- slower, but every value written comes from the same per-day query
- * already used by the daily cron and gap-fill, which does not need (and
- * doesn't use) a day-dimension column at all.
- */
-async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number }> {
+// Per-day fetching alone cannot realistically cover 26 months of history:
+// ~790 days x ~20 sites x ~7 Piwik Pro calls/day is well over 100,000 calls,
+// tens of hours even at a generous rate limit -- that's what made "recovered
+// 2 days since this morning" the actual, expected outcome once the batched
+// path got disabled, not a bug. The batched path (see
+// metrics.fetchMetricsRange -> piwik/client.ts getMetricsRange) was disabled
+// earlier today over a real but unconfirmed worry: adding a day-dimension
+// breakdown column might force Piwik Pro's Analytics Query API into event
+// scope and distort session-scoped metrics. Since then: (1) the actual
+// reported symptoms (missing/incomplete data, "lost yesterday") trace to a
+// confirmed, separate bug -- fetch() had no timeout and could hang forever,
+// silently freezing whole sync runs, now fixed; (2) a live single-day
+// comparison (getDailyMetrics vs getMetricsRange for the same day) matched
+// exactly. Given that, and that per-day is not a viable path to "complete 26
+// months" at all, the batched path is back -- with an added per-call
+// spot-check inside getMetricsRange (compares one real day from every range
+// fetch against the proven single-day path and throws on mismatch) as an
+// ongoing automatic guard, not a one-off manual test.
+const MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK = 14;
+
+async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number; batchError?: string }> {
+  try {
+    const days = await fetchMetricsRange(site.id, dateFrom, dateTo);
+    for (const day of days) await upsertSnapshot(day);
+    return { ok: days.length, failed: 0 };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const rangeDays = daysBetweenInclusive(dateFrom, dateTo);
+    if (rangeDays > MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK) {
+      console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo} (${rangeDays} days) -- too long to fall back per-day, reporting failure: ${message}`);
+      return { ok: 0, failed: rangeDays, batchError: message };
+    }
+    console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo}, falling back to per-day fetch: ${message}`);
+  }
   let ok = 0;
   let failed = 0;
   for (let d = dateFrom; d <= dateTo; d = addDaysIso(d, 1)) {
@@ -86,21 +102,22 @@ async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string)
 }
 
 /**
- * Same as syncDay but for a whole date range, per-day fetches for every
- * site. onSiteProgress (optional) fires after each concurrency batch of
- * sites finishes -- used to drive a UI progress bar for the deep-backfill
- * route (see routes/api.ts), which can take a while against the real Piwik
- * Pro API for a long range.
+ * Same as syncDay but for a whole date range, one batched request set per
+ * site instead of one per (site, day). onSiteProgress (optional) fires after
+ * each concurrency batch of sites finishes -- used to drive a UI progress
+ * bar for the deep-backfill route (see routes/api.ts), which can take a
+ * couple of minutes against the real Piwik Pro API.
  */
 export async function syncDateRange(
   dateFrom: string,
   dateTo: string,
   onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
-): Promise<{ ok: number; failed: number }> {
+): Promise<{ ok: number; failed: number; batchError?: string }> {
   const sites = await getSites();
   let ok = 0;
   let failed = 0;
   let done = 0;
+  let batchError: string | undefined;
   for (let i = 0; i < sites.length; i += CONCURRENCY) {
     const batch = sites.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map((site) => syncSiteRange(site, dateFrom, dateTo)));
@@ -108,10 +125,11 @@ export async function syncDateRange(
       ok += r.ok;
       failed += r.failed;
       done++;
+      if (r.batchError && !batchError) batchError = r.batchError;
     }
     onSiteProgress?.(done, sites.length);
   }
-  return { ok, failed };
+  return { ok, failed, batchError };
 }
 
 // Upper bound on how many (site, day) fetches a single gap-fill run performs.
@@ -145,16 +163,13 @@ export interface GapFillResult {
  * when missing). Today is a partial day (still accumulating sessions in
  * Piwik Pro); yesterday is included because the gap scan in
  * scanAndFillGaps only detects *missing* rows -- it can't catch a row
- * that's present but wrong. That happened for real: the old batched
- * range-fetch path (see syncSiteRange) could write a bad value for a day
- * that already had a correct one, e.g. while extending a site's history
- * back to the retention floor for a site with no prior data, whose target
- * range ran all the way up to yesterday. The batched path is now disabled,
- * but any bad value it already wrote stays wrong until something re-fetches
- * that exact day -- otherwise that's stuck waiting for tomorrow's cron (see
- * scheduler.ts, which does the same yesterday+today refresh but only once a
- * day). Forcing it here lets a manual "Combler les trous" click fix it
- * immediately.
+ * that's present but wrong. A bad value written by a broken fetch (the
+ * batched range path had a real bug earlier today, now fixed -- see
+ * syncSiteRange) stays wrong until something re-fetches that exact day --
+ * otherwise that's stuck waiting for tomorrow's cron (see scheduler.ts,
+ * which does the same yesterday+today refresh but only once a day). Forcing
+ * it here (and on every automatic recovery run, see autoRecovery.ts) closes
+ * that gap immediately instead.
  */
 async function forceResyncRecentDays(): Promise<{ ok: number; failed: number }> {
   const today = new Date().toISOString().slice(0, 10);
@@ -350,6 +365,8 @@ export interface ExtendHistoryResult {
   sitesExtended: number;
   ok: number;
   failed: number;
+  /** Real Piwik Pro error from the first failed range batch, if any -- see MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK. */
+  batchError?: string;
 }
 
 /**
@@ -406,6 +423,7 @@ export async function extendHistoryToRetentionFloor(
   let ok = 0;
   let failed = 0;
   let done = 0;
+  let batchError: string | undefined;
   let latestDateTo = targets[0].dateTo;
   for (let i = 0; i < targets.length; i += CONCURRENCY) {
     const batch = targets.slice(i, i + CONCURRENCY);
@@ -415,6 +433,7 @@ export async function extendHistoryToRetentionFloor(
       ok += r.ok;
       failed += r.failed;
       done++;
+      if (r.batchError && !batchError) batchError = r.batchError;
       if (batch[j].dateTo > latestDateTo) latestDateTo = batch[j].dateTo;
     }
     // Clear after every batch, not just once at the very end -- the whole
@@ -427,7 +446,7 @@ export async function extendHistoryToRetentionFloor(
     onSiteProgress?.(done, targets.length);
   }
 
-  console.log(`[sync] history extension done: ${ok} (site, day) pair(s) filled across ${targets.length} site(s), ${failed} failed.`);
+  console.log(`[sync] history extension done: ${ok} (site, day) pair(s) filled across ${targets.length} site(s), ${failed} failed.${batchError ? ` First batch error: ${batchError}` : ""}`);
   return {
     extended: true,
     dateFrom: retentionFloor,
@@ -436,5 +455,47 @@ export async function extendHistoryToRetentionFloor(
     sitesExtended: targets.length,
     ok,
     failed,
+    batchError,
   };
 }
+
+/**
+ * Cheap local check (Postgres reads only, no Piwik Pro calls) for whether
+ * every site's history is already complete back to the retention floor with
+ * no known gaps -- lets the automatic recovery loop below (and its periodic
+ * retry in scheduler.ts) skip straight past real work once there's nothing
+ * left to do, instead of spending rate-limited API budget re-confirming
+ * "still complete" over and over.
+ */
+export async function historyNeedsRecovery(): Promise<boolean> {
+  const sites = await getSites();
+  if (sites.length === 0) return false;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = addDaysIso(today, -1);
+  const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
+
+  const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
+  for (const site of sites) {
+    const earliest = earliestBySite.get(site.id);
+    // No data yet, or still room to extend further back towards the
+    // retention floor.
+    if (!earliest || earliest > addDaysIso(retentionFloor, 1)) return true;
+  }
+
+  const datesBySite = await getSnapshotDatesBySite(
+    sites.map((s) => s.id),
+    retentionFloor,
+    yesterday
+  );
+  const expectedDays = daysBetweenInclusive(retentionFloor, yesterday);
+  for (const site of sites) {
+    if ((datesBySite.get(site.id)?.size ?? 0) < expectedDays) return true; // a gap remains somewhere
+  }
+  return false;
+}
+
+// The actual automatic orchestration (extend + gap-fill, wired to the same
+// status trackers the manual buttons use) lives in autoRecovery.ts as
+// runAutomaticRecovery -- called from index.ts (boot) and scheduler.ts
+// (periodic tick). historyNeedsRecovery above is what lets it no-op cheaply.

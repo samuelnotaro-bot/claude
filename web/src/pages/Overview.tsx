@@ -173,29 +173,25 @@ export function Overview() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {gapMessage && <span className="chart-note" style={{ margin: 0 }}>{gapMessage}</span>}
-            <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps} title="Interroge Piwik Pro en direct, au rythme autorisé par votre limite d'appels -- tourne en arrière-plan jusqu'à ce que tout soit comblé, comptez plusieurs minutes pour un gros trou.">
-              {fillingGaps ? "Comblement en cours…" : "Combler les trous de données"}
+            <button className="secondary-btn" onClick={handleFillGaps} disabled={fillingGaps} title="Le serveur comble déjà les trous automatiquement en arrière-plan (au démarrage et toutes les 15 min) -- ce bouton force juste une passe immédiate au lieu d'attendre.">
+              {fillingGaps ? "Comblement en cours…" : "Forcer un comblement immédiat"}
             </button>
           </div>
-          <p className="chart-note" style={{ margin: 0, maxWidth: 420, textAlign: "right" }}>
-            Utile car ce service peut se mettre en veille (plan gratuit) et manquer la synchro automatique quotidienne --
-            ce bouton relance la récupération manuellement plutôt que d'attendre le prochain réveil. Tourne en
-            arrière-plan et reprend plusieurs tours tout seul jusqu'à ce que tout soit à jour.
-          </p>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {deepBackfillMessage && <span className="chart-note" style={{ margin: 0 }}>{deepBackfillMessage}</span>}
             <button
               className="secondary-btn"
               onClick={handleDeepBackfill}
               disabled={deepBackfilling}
-              title="Récupère l'historique Piwik Pro jusqu'à la limite de rétention (26 mois) -- tourne en arrière-plan, comptez quelques minutes."
+              title="Le serveur étend déjà l'historique jusqu'à 26 mois automatiquement en arrière-plan -- ce bouton force juste une passe immédiate au lieu d'attendre."
             >
-              {deepBackfilling ? "Extension en cours…" : "Étendre l'historique (26 mois)"}
+              {deepBackfilling ? "Extension en cours…" : "Forcer une extension immédiate"}
             </button>
           </div>
           <p className="chart-note" style={{ margin: 0, maxWidth: 420, textAlign: "right" }}>
-            Utile la première fois, ou si le chargement initial n'a couvert que quelques mois -- va chercher tout ce que
-            Piwik Pro garde encore (jusqu'à 26 mois en arrière), une seule fois suffit ensuite.
+            La récupération des 26 mois d'historique et le comblement des trous tournent automatiquement en
+            arrière-plan (au démarrage puis toutes les 15 minutes tant que le service est éveillé) -- ces boutons ne
+            sont là que pour forcer une passe immédiate plutôt que d'attendre.
           </p>
         </div>
       </div>

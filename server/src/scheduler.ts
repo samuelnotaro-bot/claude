@@ -5,8 +5,24 @@ import { syncDay } from "./sync.js";
 import { runSynthesis } from "./analysis.js";
 import { checkGeoMismatches } from "./geoMismatch.js";
 import { clearCache } from "./cache.js";
+import { runAutomaticRecovery } from "./autoRecovery.js";
 
 export function startScheduler(): void {
+  // Keeps the 26-month history recovery (see autoRecovery.ts) moving
+  // forward on its own for as long as the process stays awake, not just
+  // once at boot -- a large backlog (a fresh deploy, or catching up after an
+  // extended outage) can take longer than one boot-to-sleep window on
+  // Render's free tier. historyNeedsRecovery() inside runAutomaticRecovery
+  // is a couple of cheap DB reads, so this tick costs nothing once history
+  // is actually complete.
+  cron.schedule("*/15 * * * *", async () => {
+    try {
+      await runAutomaticRecovery();
+    } catch (err) {
+      console.error("[scheduler] automatic history recovery failed:", err);
+    }
+  });
+
   cron.schedule(config.fetchCron, async () => {
     try {
       console.log("[scheduler] daily fetch starting...");

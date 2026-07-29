@@ -11,7 +11,7 @@ import { registerStaticWeb } from "./staticWeb.js";
 import { startScheduler } from "./scheduler.js";
 import { getLatestSynthesis } from "./repo.js";
 import { backfillAll } from "./backfill.js";
-import { backfillGaps } from "./sync.js";
+import { runAutomaticRecovery } from "./autoRecovery.js";
 
 await initSchema();
 
@@ -43,19 +43,23 @@ try {
     // First boot on a fresh deploy (e.g. a new Render service): populate history in the
     // background instead of requiring shell access to run `npm run backfill` manually.
     // The server already accepts requests while this runs; pages just show empty data
-    // until it completes.
+    // until it completes. Chains straight into runAutomaticRecovery so a fresh deploy
+    // goes all the way to the full 26-month retention floor on its own, not just the
+    // initial quick window -- no manual "Étendre l'historique" click needed.
     app.log.warn("Aucune donnée trouvée -- lancement automatique d'un backfill en arrière-plan.");
-    backfillAll().catch((err) => app.log.error({ err }, "Backfill automatique au démarrage échoué"));
+    backfillAll()
+      .then(() => runAutomaticRecovery())
+      .catch((err) => app.log.error({ err }, "Backfill automatique au démarrage échoué"));
   } else {
-    // Already has history: close any gaps left by cron runs missed while
-    // asleep (Render free-tier spin-down) or by a transient API failure,
-    // instead of a full re-backfill. Also available on demand via
-    // POST /api/data/fill-gaps (see routes/api.ts).
-    backfillGaps()
-      .then((r) => {
-        if (r.daysFilled > 0) app.log.info(r, "Rattrapage des jours manquants au démarrage");
-      })
-      .catch((err) => app.log.error({ err }, "Rattrapage des jours manquants échoué"));
+    // Already has history: drive it automatically to "complete back to the
+    // retention floor, no gaps" -- extends further back if needed, then
+    // closes any holes left by cron runs missed while asleep (Render
+    // free-tier spin-down) or a transient API failure. No-ops quickly if
+    // already complete. Also available on demand via POST
+    // /api/data/deep-backfill and /api/data/fill-gaps (see routes/api.ts),
+    // and re-run periodically while awake (see scheduler.ts) so a large
+    // backlog keeps closing without needing the app to restart.
+    runAutomaticRecovery().catch((err) => app.log.error({ err }, "Récupération automatique au démarrage échouée"));
   }
 } catch (err) {
   app.log.error(err);

@@ -601,6 +601,33 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     bucket.searchConsoleImpressions = Number(row[COLUMN_IDS.searchConsoleImpressions] ?? 0);
   }
 
+  // Automatic ongoing guard, not a one-off manual test: verify the batched
+  // day-dimension breakdown agrees with the proven single-day path (no day
+  // dimension at all) for one real day out of this range, every time this
+  // function runs. This is exactly the check that a wrong column id or a
+  // scope-forcing regression on Piwik Pro's side would fail -- catching it
+  // automatically here (and refusing to write the batch, see the throw
+  // below) matters more than the extra Piwik Pro call costs: one call per
+  // getMetricsRange invocation (once per site per range-fetch, not once per
+  // chunk) is negligible next to the hundreds saved by batching at all.
+  const spotCheckDate = dateTo;
+  const spotCheckBucket = byDay.get(spotCheckDate);
+  if (spotCheckBucket) {
+    const [reference] = await queryAnalytics({
+      website_id: siteId,
+      date_from: spotCheckDate,
+      date_to: spotCheckDate,
+      columns: [{ column_id: COLUMN_IDS.sessions }],
+    });
+    const referenceSessions = Number(reference?.[COLUMN_IDS.sessions] ?? 0);
+    if (referenceSessions !== spotCheckBucket.sessions) {
+      throw new Error(
+        `[piwik] range query spot-check mismatch for ${siteId}/${spotCheckDate}: batched sessions=${spotCheckBucket.sessions} vs single-day sessions=${referenceSessions} -- ` +
+          `the day-dimension breakdown may be distorting session totals, refusing to write this range`
+      );
+    }
+  }
+
   return [...byDay.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, bucket]) => ({
