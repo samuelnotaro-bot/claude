@@ -231,22 +231,41 @@ async function queryAnalytics(body: Record<string, unknown>): Promise<QueryRow[]
   });
 }
 
-// A single-day query returns a handful of rows (one per channel/goal at most),
-// no pagination needed -- but a multi-day range broken down by day (and
-// sometimes also by channel/goal/source within each day) can run into the
-// thousands of rows for a long backfill. Loop on offset/limit until a page
-// comes back short, with a hard cap so a misbehaving response can't spin
-// forever.
-const RANGE_QUERY_PAGE_SIZE = 1000;
-const MAX_RANGE_QUERY_PAGES = 50;
+// A single-day query returns a handful of rows (one per channel/goal at
+// most), no chunking needed -- but a long multi-day range broken down by day
+// can run into hundreds or thousands of rows. `limit`/`offset` pagination on
+// this endpoint was never confirmed (no test org access), and a real run
+// showed exactly the failure mode that guess would cause if wrong: no error,
+// but only the most recent slice of a long range actually came back (older
+// months stayed at zero even though Piwik Pro's own UI has real traffic
+// there). Rather than keep guessing at pagination, split the range into
+// short chunks up front -- each chunk's row count then stays comfortably
+// under any plausible single-page limit without needing pagination at all.
+const RANGE_CHUNK_DAYS = 30;
+const MAX_PLAUSIBLE_ROWS_PER_CHUNK = 1000;
 
-async function queryAnalyticsRange(body: Record<string, unknown>): Promise<QueryRow[]> {
-  const rows: QueryRow[] = [];
-  for (let page = 0; page < MAX_RANGE_QUERY_PAGES; page++) {
-    const offset = page * RANGE_QUERY_PAGE_SIZE;
-    const pageRows = await queryAnalytics({ ...body, limit: RANGE_QUERY_PAGE_SIZE, offset });
-    rows.push(...pageRows);
-    if (pageRows.length < RANGE_QUERY_PAGE_SIZE) break;
+function splitIntoChunks(dateFrom: string, dateTo: string): Array<{ from: string; to: string }> {
+  const chunks: Array<{ from: string; to: string }> = [];
+  let from = dateFrom;
+  while (from <= dateTo) {
+    const to = addDaysIso(from, RANGE_CHUNK_DAYS - 1);
+    chunks.push({ from, to: to > dateTo ? dateTo : to });
+    from = addDaysIso(to, 1);
+  }
+  return chunks;
+}
+
+async function queryAnalyticsRange(body: Record<string, unknown>, dateFrom: string, dateTo: string): Promise<QueryRow[]> {
+  const chunks = splitIntoChunks(dateFrom, dateTo);
+  const chunkResults = await Promise.all(
+    chunks.map((c) => queryAnalytics({ ...body, date_from: c.from, date_to: c.to }))
+  );
+  const rows = chunkResults.flat();
+  if (rows.length > chunks.length * MAX_PLAUSIBLE_ROWS_PER_CHUNK) {
+    throw new Error(
+      `[piwik] range query returned ${rows.length} rows across ${chunks.length} chunk(s) of ${RANGE_CHUNK_DAYS} days -- ` +
+        `a single chunk is exceeding the plausible row count, likely hitting an unconfirmed per-request row limit`
+    );
   }
   return rows;
 }
@@ -351,10 +370,13 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
 
 /**
  * Same shape of data as getDailyMetrics, but for a whole [dateFrom, dateTo]
- * range in ~7 requests total instead of ~7 requests PER DAY -- each query
- * adds COLUMN_IDS.dayDimension as a breakdown dimension so one call returns
- * every day in the range at once. This is what makes a real multi-month (or
- * multi-year) backfill practical against Piwik Pro's per-minute rate limit.
+ * range in ~7 requests per RANGE_CHUNK_DAYS-day chunk instead of ~7 requests
+ * PER DAY -- each query adds COLUMN_IDS.dayDimension as a breakdown
+ * dimension so one call returns every day in that chunk at once. Still a
+ * large multiplier over the naive per-day approach (a 791-day backfill is
+ * ~7 * ceil(791/30) ≈ 189 requests per site instead of ~5500), and what
+ * makes a real multi-month backfill practical against Piwik Pro's
+ * per-minute rate limit.
  *
  * Relies on the unverified `dayDimension` column id (see COLUMN_IDS comment).
  * Throws if anything about that assumption is wrong (bad column id, or a
@@ -384,8 +406,6 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
   const [totalsRows, channelRows, goalRows, downloadRows, sourceRows, bounceRows, gscRows] = await Promise.all([
     queryAnalyticsRange({
       website_id: siteId,
-      date_from: dateFrom,
-      date_to: dateTo,
       columns: [
         DAY_DIMENSION_COLUMN,
         { column_id: COLUMN_IDS.sessions },
@@ -394,43 +414,31 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
         { column_id: COLUMN_IDS.goalConversions },
         { column_id: COLUMN_IDS.bounceRate },
       ],
-    }),
+    }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      date_from: dateFrom,
-      date_to: dateTo,
       columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.sessions }],
-    }),
+    }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      date_from: dateFrom,
-      date_to: dateTo,
       columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.goalDimension }, { column_id: COLUMN_IDS.goalConversions }],
-    }),
+    }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      date_from: dateFrom,
-      date_to: dateTo,
       columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.downloads }],
-    }),
+    }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      date_from: dateFrom,
-      date_to: dateTo,
       columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
-    }),
+    }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      date_from: dateFrom,
-      date_to: dateTo,
       columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
-    }),
+    }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      date_from: dateFrom,
-      date_to: dateTo,
       columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
-    }),
+    }, dateFrom, dateTo),
   ]);
 
   assertPlausible(totalsRows, "totals");
