@@ -1,4 +1,4 @@
-import { historyNeedsRecovery, extendHistoryToRetentionFloor, runGapFillLoop } from "./sync.js";
+import { historyNeedsRecovery, extendHistoryToRetentionFloor, runGapFillLoop, revalidateRecentZeroDays } from "./sync.js";
 import { getDeepBackfillStatus, startDeepBackfillStatus, updateDeepBackfillProgress, finishDeepBackfillStatus } from "./deepBackfillStatus.js";
 import { getGapFillStatus, startGapFillStatus, updateGapFillProgress, finishGapFillStatus } from "./gapFillStatus.js";
 
@@ -47,4 +47,27 @@ export async function runAutomaticRecovery(): Promise<void> {
       finishGapFillStatus(null, err instanceof Error ? err.message : String(err));
     }
   }
+}
+
+/**
+ * Boot-only wrapper: re-verifies recent stored zero-session days (see
+ * sync.ts#revalidateRecentZeroDays -- a one-time cleanup for rows possibly
+ * poisoned by bugs fixed earlier today, invisible to the regular
+ * presence-based gap-fill scan) before the regular automatic recovery.
+ * Deliberately not part of runAutomaticRecovery itself: that also runs
+ * every 15 minutes via the scheduler, and re-checking the same
+ * already-verified recent zero days over and over on every tick would just
+ * waste rate-limited API budget for no further benefit once they've been
+ * confirmed once.
+ */
+export async function runBootRecovery(): Promise<void> {
+  try {
+    const result = await revalidateRecentZeroDays();
+    if (result.checked > 0) {
+      console.log(`[autoRecovery] boot zero-day re-verification: ${result.checked} checked, ${result.corrected} corrected.`);
+    }
+  } catch (err) {
+    console.error("[autoRecovery] boot zero-day re-verification failed:", err);
+  }
+  await runAutomaticRecovery();
 }

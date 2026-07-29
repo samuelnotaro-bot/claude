@@ -27,6 +27,21 @@ export function Overview() {
       .catch((e) => setError(String(e)));
   }, [queryParams]);
 
+  // History recovery (extend-to-26-months, gap-fill, zero-day revalidation --
+  // see autoRecovery.ts) now runs entirely server-side, automatically, with
+  // no button click required -- but without this, the numbers on screen were
+  // stuck at whatever they were when the page first loaded, since nothing
+  // ever told the page to look again. Silently re-fetches in the background;
+  // errors are ignored here (the mount-time fetch above already surfaces a
+  // real connectivity problem) so a single missed tick doesn't clear a
+  // perfectly good dashboard.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      api.overview(queryParams).then(setOverview).catch(() => {});
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [queryParams]);
+
   // Resume polling on mount if a job is already running server-side (e.g.
   // the button was clicked, then the page got reloaded) -- both are
   // background jobs precisely so leaving/reloading the page doesn't lose

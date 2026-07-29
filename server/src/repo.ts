@@ -224,6 +224,29 @@ export async function getSnapshotDatesBySite(siteIds: string[], dateFrom: string
   return byId;
 }
 
+/**
+ * (site, date) pairs within a range whose stored row reports exactly 0
+ * sessions -- indistinguishable by presence alone from a genuinely quiet
+ * day, but also exactly what a broken fetch writes (a real bug fixed
+ * earlier today: an unbounded hang, and a since-corrected batched-query
+ * issue, could each produce a confirmed-wrong zero for a day that actually
+ * had traffic). getSnapshotDatesBySite (presence-only) will never re-fetch
+ * one of these -- see sync.ts#revalidateRecentZeroDays, which uses this to
+ * re-verify a bounded recent window once instead of trusting a zero forever.
+ */
+export async function getZeroSessionDatesBySite(siteIds: string[], dateFrom: string, dateTo: string): Promise<Map<string, string[]>> {
+  const byId = new Map<string, string[]>(siteIds.map((id) => [id, []]));
+  if (siteIds.length === 0) return byId;
+  const { rows } = await pool.query(
+    `SELECT site_id, date FROM site_snapshots WHERE site_id = ANY($1) AND date BETWEEN $2 AND $3 AND sessions = 0`,
+    [siteIds, dateFrom, dateTo]
+  );
+  for (const r of rows) {
+    byId.get(r.site_id)?.push(r.date);
+  }
+  return byId;
+}
+
 function rowToSnapshot(r: any): SnapshotRow {
   return {
     siteId: r.site_id,

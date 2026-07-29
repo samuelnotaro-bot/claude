@@ -3,6 +3,7 @@ import {
   upsertSnapshot,
   getEarliestSnapshotDateBySite,
   getSnapshotDatesBySite,
+  getZeroSessionDatesBySite,
   type SiteRecord,
 } from "./repo.js";
 import { fetchDailyMetrics, fetchMetricsRange } from "./metrics.js";
@@ -499,3 +500,73 @@ export async function historyNeedsRecovery(): Promise<boolean> {
 // status trackers the manual buttons use) lives in autoRecovery.ts as
 // runAutomaticRecovery -- called from index.ts (boot) and scheduler.ts
 // (periodic tick). historyNeedsRecovery above is what lets it no-op cheaply.
+
+// How far back to re-verify stored zero-session rows -- bounded on purpose.
+// This exists to clean up after two real, now-fixed bugs from earlier today
+// (an unbounded fetch hang, and a batched-query issue) that could each write
+// a confirmed-wrong 0 for a day that actually had traffic -- not to become a
+// standing, ever-repeating re-check of every legitimately quiet day in the
+// account's history, which would just burn rate-limited API budget forever
+// for no benefit on old, never-touched-by-today's-bugs data.
+const ZERO_DAY_REVALIDATION_WINDOW_DAYS = 14;
+
+/**
+ * Re-fetches every (site, day) row in the last ZERO_DAY_REVALIDATION_WINDOW_DAYS
+ * days that's currently stored as exactly 0 sessions. A stored zero is
+ * indistinguishable, by presence alone, from a genuinely quiet day -- which
+ * is exactly why the regular gap-fill scan (see scanAndFillGaps, presence-
+ * based) can never detect or correct one: a "poisoned" zero written by a
+ * broken fetch looks identical to real silence and is never retried. This
+ * directly re-verifies each one instead of trusting it, so a bad row left
+ * over from earlier today's bugs self-heals instead of showing as a
+ * permanent (and misleading) "data outage" on a site that's actually fine.
+ *
+ * Meant to run once (see autoRecovery.ts#runBootRecovery, called at boot
+ * only -- not on the periodic tick) rather than repeatedly: once today's
+ * bad rows are corrected, a day that's still 0 after this has been
+ * genuinely re-verified against Piwik Pro and re-checking it again and
+ * again would be pure waste.
+ */
+export async function revalidateRecentZeroDays(): Promise<{ checked: number; corrected: number }> {
+  const sites = await getSites();
+  if (sites.length === 0) return { checked: 0, corrected: 0 };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = addDaysIso(today, -1);
+  const windowFrom = addDaysIso(today, -ZERO_DAY_REVALIDATION_WINDOW_DAYS);
+
+  const zeroBySite = await getZeroSessionDatesBySite(sites.map((s) => s.id), windowFrom, yesterday);
+  const targets: Array<{ site: SiteRecord; date: string }> = [];
+  for (const site of sites) {
+    for (const date of zeroBySite.get(site.id) ?? []) targets.push({ site, date });
+  }
+  if (targets.length === 0) return { checked: 0, corrected: 0 };
+
+  console.log(`[sync] re-verifying ${targets.length} stored zero-session day(s) across the last ${ZERO_DAY_REVALIDATION_WINDOW_DAYS} days (one-time check for rows possibly poisoned by earlier bugs)...`);
+
+  let checked = 0;
+  let corrected = 0;
+  for (let i = 0; i < targets.length; i += CONCURRENCY) {
+    const batch = targets.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async ({ site, date }) => {
+        try {
+          const metrics = await fetchDailyMetrics(site.id, date);
+          await upsertSnapshot(metrics);
+          return metrics.sessions > 0;
+        } catch (err) {
+          console.error(`[sync] zero-day re-verification failed for ${site.name}/${date}, leaving as-is: ${err instanceof Error ? err.message : String(err)}`);
+          return false;
+        }
+      })
+    );
+    for (const wasCorrected of results) {
+      checked++;
+      if (wasCorrected) corrected++;
+    }
+  }
+
+  if (corrected > 0) clearCache();
+  console.log(`[sync] zero-day re-verification done: ${checked} checked, ${corrected} corrected (had real traffic after all).`);
+  return { checked, corrected };
+}
