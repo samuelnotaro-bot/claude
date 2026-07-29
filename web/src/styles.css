@@ -203,31 +203,6 @@ body {
   flex-shrink: 0;
 }
 
-/* En dessous de cette largeur, plus assez de place pour marque + sélecteurs
-   sur une même ligne -- on empile plutôt que de laisser déborder hors écran
-   (c'était le cas avant : sélecteurs coupés à droite, sous-titre écrasé en
-   une colonne d'un mot de large). */
-@media (max-width: 760px) {
-  .app-header {
-    flex-wrap: wrap;
-    align-items: flex-start;
-  }
-  .header-col-brand {
-    flex-basis: 100%;
-  }
-  .header-col-controls {
-    flex-basis: 100%;
-    justify-content: flex-start;
-  }
-  .header-controls,
-  .period-controls {
-    flex-wrap: wrap;
-  }
-  .app-header .subtitle {
-    max-width: none;
-  }
-}
-
 .app-header h1 {
   font-size: 20px;
   font-weight: 700;
@@ -822,4 +797,42 @@ button.secondary-btn:disabled {
   border-radius: 8px;
   padding: 8px 10px;
   margin-top: 2px;
+}
+
+/* En dessous de cette largeur, plus assez de place pour marque + sélecteurs
+   sur une même ligne -- on empile plutôt que de laisser déborder hors écran
+   (c'était le cas avant : sélecteurs coupés à droite, sous-titre écrasé en
+   une colonne d'un mot de large). Placé en fin de fichier (pas juste dans une
+   media query) pour être sûr de l'emporter sur les règles de base de même
+   spécificité définies plus haut -- une media query ne change pas la
+   spécificité, seulement si la règle s'applique ou non à cette largeur, donc
+   sa position dans le fichier compte toujours pour départager le cascade. */
+@media (max-width: 760px) {
+  .app-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .header-col-brand {
+    flex-basis: 100%;
+  }
+  .header-col-controls {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+  .header-controls,
+  .period-controls {
+    flex-wrap: wrap;
+  }
+  .app-header .subtitle {
+    max-width: none;
+  }
+  /* "Comparer à la période précédente" est assez long pour déborder de
+     l'écran à lui seul sur un téléphone étroit -- tronque plutôt que de
+     laisser dépasser du bord. */
+  .period-select {
+    max-width: calc(100vw - 40px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
