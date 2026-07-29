@@ -115,16 +115,17 @@ function sleep(ms: number): Promise<void> {
 // exceeded regardless of how many different callers are pulling from it.
 const requestTimestamps: number[] = [];
 
-// "bulk" calls (the deep-backfill's chunked range queries -- up to ~189
-// requests per site, easily tens of minutes of the whole budget) cap
-// themselves to a fraction of the limit instead of the full amount, so they
-// can never starve "normal" calls (the daily cron, on-demand gap-fills, live
-// diagnostics) even during a long-running backfill. Normal calls always see
-// the full limit and are never held back by bulk traffic -- this is what
-// went wrong before this existed: a long deep-backfill run could occupy
-// every slot in the shared window, and the daily sync would then wait
-// behind it for as long as the backfill kept making requests.
-const BULK_SHARE_OF_LIMIT = 0.6;
+// "bulk" calls (the deep-backfill's chunked range queries) cap themselves to
+// a fraction of the limit instead of the full amount, so they can never
+// starve "normal" calls (the daily cron, on-demand gap-fills, live
+// diagnostics) even during a long-running backfill -- normal calls always
+// see the full limit and are never held back by bulk traffic. 0.85 rather
+// than a more conservative split: normal traffic here is a handful of
+// requests once a day plus the occasional manual click, so it only needs a
+// small reserved slice -- the deep-backfill is the one under real time
+// pressure (a full run is bounded by Piwik Pro's real per-minute limit no
+// matter what, so it should get to use nearly all of it).
+const BULK_SHARE_OF_LIMIT = 0.85;
 
 async function waitForRateLimitSlot(priority: "normal" | "bulk" = "normal"): Promise<void> {
   const limit = config.piwikMaxRequestsPerMinute;
@@ -255,8 +256,17 @@ async function queryAnalytics(body: Record<string, unknown>, priority: "normal" 
 // there). Rather than keep guessing at pagination, split the range into
 // short chunks up front -- each chunk's row count then stays comfortably
 // under any plausible single-page limit without needing pagination at all.
-const RANGE_CHUNK_DAYS = 30;
-const MAX_PLAUSIBLE_ROWS_PER_CHUNK = 1000;
+const RANGE_CHUNK_DAYS = 45;
+const MAX_PLAUSIBLE_ROWS_PER_CHUNK = 1800;
+// A handful of chunks in flight at once instead of one-at-a-time -- fully
+// sequential was a deliberate over-correction after ~950 simultaneously
+// pending requests (Promise.all over every chunk) looked like it was
+// crashing the process on a memory-constrained instance. A small cap keeps
+// peak concurrency an order of magnitude below that (5 sites x 7 query
+// types x 3 = ~105 max) while still overlapping network latency instead of
+// paying it chunk by chunk -- the real bottleneck either way is the shared
+// rate limiter, not concurrency.
+const CHUNK_CONCURRENCY = 3;
 
 function splitIntoChunks(dateFrom: string, dateTo: string): Array<{ from: string; to: string }> {
   const chunks: Array<{ from: string; to: string }> = [];
@@ -271,22 +281,15 @@ function splitIntoChunks(dateFrom: string, dateTo: string): Array<{ from: string
 
 async function queryAnalyticsRange(body: Record<string, unknown>, dateFrom: string, dateTo: string): Promise<QueryRow[]> {
   const chunks = splitIntoChunks(dateFrom, dateTo);
-  // Sequential, not Promise.all -- a full 26-month range is ~27 chunks, and
-  // with 7 query types x up to 5 concurrent sites (see CONCURRENCY in
-  // sync.ts), firing every chunk at once would open ~950 pending requests
-  // simultaneously. They all funnel through the same rate limiter anyway
-  // (no real throughput gained by racing them), but that many concurrent
-  // pending fetches is a plausible source of memory pressure on a
-  // constrained instance -- matching a real-world observation of the deep
-  // backfill process restarting from scratch every 10-60 minutes instead of
-  // running to completion, consistent with the process crashing and Render
-  // auto-restarting it rather than a clean finish.
   const rows: QueryRow[] = [];
-  for (const c of chunks) {
-    // "bulk" priority: see BULK_SHARE_OF_LIMIT -- this is the deep-backfill
-    // path, it must never be able to starve the daily cron/on-demand calls.
-    const chunkRows = await queryAnalytics({ ...body, date_from: c.from, date_to: c.to }, "bulk");
-    rows.push(...chunkRows);
+  for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
+    const batch = chunks.slice(i, i + CHUNK_CONCURRENCY);
+    const batchResults = await Promise.all(
+      // "bulk" priority: see BULK_SHARE_OF_LIMIT -- this is the deep-backfill
+      // path, it must never be able to starve the daily cron/on-demand calls.
+      batch.map((c) => queryAnalytics({ ...body, date_from: c.from, date_to: c.to }, "bulk"))
+    );
+    for (const r of batchResults) rows.push(...r);
   }
   if (rows.length > chunks.length * MAX_PLAUSIBLE_ROWS_PER_CHUNK) {
     throw new Error(
@@ -401,7 +404,7 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
  * PER DAY -- each query adds COLUMN_IDS.dayDimension as a breakdown
  * dimension so one call returns every day in that chunk at once. Still a
  * large multiplier over the naive per-day approach (a 791-day backfill is
- * ~7 * ceil(791/30) ≈ 189 requests per site instead of ~5500), and what
+ * ~7 * ceil(791/45) ≈ 126 requests per site instead of ~5500), and what
  * makes a real multi-month backfill practical against Piwik Pro's
  * per-minute rate limit.
  *
