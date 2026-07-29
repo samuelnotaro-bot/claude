@@ -1,7 +1,6 @@
 import {
   getSites,
   upsertSnapshot,
-  getEarliestSnapshotDate,
   getEarliestSnapshotDateBySite,
   getSnapshotDatesBySite,
   type SiteRecord,
@@ -177,7 +176,7 @@ export interface GapFillResult {
  */
 export async function backfillGaps(): Promise<GapFillResult> {
   const empty: GapFillResult = { sitesWithGaps: 0, daysFilled: 0, daysRemaining: 0, daysFailed: 0, daysOutOfRetention: 0 };
-  const [sites, earliest] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
+  const sites = await getSites();
   if (sites.length === 0) return empty;
 
   const today = new Date().toISOString().slice(0, 10);
@@ -189,26 +188,43 @@ export async function backfillGaps(): Promise<GapFillResult> {
   const todayResult = await syncDay(today);
   if (todayResult.ok > 0) clearCache();
 
-  if (!earliest) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
+  // Per-site earliest, not a single global MIN(date) -- once
+  // extendHistoryToRetentionFloor has pushed some sites' history back to
+  // ~2 years while others are still recent, a shared "earliest" balloons
+  // the scan window to the full 2 years for every site, and it takes just
+  // one site with a large legitimate gap (e.g. one still mid-extension) to
+  // exhaust the whole per-run fill budget before a much smaller, more
+  // urgent gap on another site is ever reached.
+  const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
+  const sitesWithHistory = sites.filter((s) => earliestBySite.get(s.id));
+  if (sitesWithHistory.length === 0) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
 
   const yesterday = addDaysIso(today, -1);
-  if (earliest > yesterday) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
-
   const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
+  let overallEarliest = earliestBySite.get(sitesWithHistory[0].id)!;
+  for (const site of sitesWithHistory) {
+    const e = earliestBySite.get(site.id)!;
+    if (e < overallEarliest) overallEarliest = e;
+  }
+  if (overallEarliest > yesterday) return { ...empty, daysFilled: todayResult.ok, daysFailed: todayResult.failed };
 
+  // One presence lookup covering every site's range at once (cheap local
+  // DB read, not rate-limited Piwik Pro calls) -- each site's own scan
+  // below only walks its own [siteEarliest, yesterday] slice of it.
   const datesBySite = await getSnapshotDatesBySite(
-    sites.map((s) => s.id),
-    earliest,
+    sitesWithHistory.map((s) => s.id),
+    overallEarliest,
     yesterday
   );
 
   const missingBySite = new Map<string, string[]>();
   let totalMissing = 0;
   let outOfRetention = 0;
-  for (const site of sites) {
+  for (const site of sitesWithHistory) {
+    const siteEarliest = earliestBySite.get(site.id)!;
     const present = datesBySite.get(site.id) ?? new Set<string>();
     const missing: string[] = [];
-    for (let d = earliest; d <= yesterday; d = addDaysIso(d, 1)) {
+    for (let d = siteEarliest; d <= yesterday; d = addDaysIso(d, 1)) {
       if (present.has(d)) continue;
       if (d < retentionFloor) {
         // Piwik Pro will never return this date again -- don't attempt it,
@@ -228,16 +244,28 @@ export async function backfillGaps(): Promise<GapFillResult> {
 
   console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) within the ${config.piwikDataRetentionDays}-day retention window (+${outOfRetention} unfillable, out of retention); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
 
+  // Round-robin across sites (one missing day at a time), not one site
+  // drained before the next -- guarantees every site with a gap gets
+  // touched this run instead of the whole budget going to whichever site
+  // happens to be first and have the largest backlog.
+  const siteById = new Map(sites.map((s) => [s.id, s]));
+  const siteIdsWithGaps = [...missingBySite.keys()];
+  const cursors = new Map<string, number>(siteIdsWithGaps.map((id) => [id, 0]));
   let filled = 0;
   let failed = 0;
   let attempted = 0;
-  outer: for (const site of sites) {
-    const missing = missingBySite.get(site.id);
-    if (!missing) continue;
-    for (const date of missing) {
-      if (attempted >= MAX_GAP_FILLS_PER_RUN) break outer;
+  let progressed = true;
+  while (attempted < MAX_GAP_FILLS_PER_RUN && progressed) {
+    progressed = false;
+    for (const siteId of siteIdsWithGaps) {
+      if (attempted >= MAX_GAP_FILLS_PER_RUN) break;
+      const missing = missingBySite.get(siteId)!;
+      const cursor = cursors.get(siteId)!;
+      if (cursor >= missing.length) continue;
+      progressed = true;
       attempted++;
-      const result = await syncSiteDate(site, date);
+      cursors.set(siteId, cursor + 1);
+      const result = await syncSiteDate(siteById.get(siteId)!, missing[cursor]);
       if (result.ok) filled++;
       else failed++;
     }
