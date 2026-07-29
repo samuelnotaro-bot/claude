@@ -109,20 +109,33 @@ function sleep(ms: number): Promise<void> {
 // Sliding-window client-side rate limiter shared by every Piwik Pro call
 // (paced right here, the one chokepoint every request goes through) --
 // staying under config.piwik.piwikMaxRequestsPerMinute keeps a busy sync
-// (up to ~7 calls/site/day, ~20 sites) from bursting past whatever limit the
-// account's Piwik Pro plan enforces, which otherwise surfaces as silent
-// failures (i.e. more data gaps, not fewer).
+// from bursting past whatever limit the account's Piwik Pro plan enforces,
+// which otherwise surfaces as silent failures (i.e. more data gaps, not
+// fewer). One shared timestamp list, so the real external limit is never
+// exceeded regardless of how many different callers are pulling from it.
 const requestTimestamps: number[] = [];
 
-async function waitForRateLimitSlot(): Promise<void> {
+// "bulk" calls (the deep-backfill's chunked range queries -- up to ~189
+// requests per site, easily tens of minutes of the whole budget) cap
+// themselves to a fraction of the limit instead of the full amount, so they
+// can never starve "normal" calls (the daily cron, on-demand gap-fills, live
+// diagnostics) even during a long-running backfill. Normal calls always see
+// the full limit and are never held back by bulk traffic -- this is what
+// went wrong before this existed: a long deep-backfill run could occupy
+// every slot in the shared window, and the daily sync would then wait
+// behind it for as long as the backfill kept making requests.
+const BULK_SHARE_OF_LIMIT = 0.6;
+
+async function waitForRateLimitSlot(priority: "normal" | "bulk" = "normal"): Promise<void> {
   const limit = config.piwikMaxRequestsPerMinute;
   if (limit <= 0) return; // 0/negative = pacing disabled
+  const effectiveLimit = priority === "bulk" ? Math.max(1, Math.floor(limit * BULK_SHARE_OF_LIMIT)) : limit;
   for (;;) {
     const now = Date.now();
     while (requestTimestamps.length > 0 && now - requestTimestamps[0] >= 60_000) {
       requestTimestamps.shift();
     }
-    if (requestTimestamps.length < limit) {
+    if (requestTimestamps.length < effectiveLimit) {
       requestTimestamps.push(now);
       return;
     }
@@ -132,9 +145,9 @@ async function waitForRateLimitSlot(): Promise<void> {
 
 const MAX_RATE_LIMIT_RETRIES = 3;
 
-async function piwikFetch<T>(pathAndQuery: string, init: RequestInit = {}): Promise<T> {
+async function piwikFetch<T>(pathAndQuery: string, init: RequestInit = {}, priority: "normal" | "bulk" = "normal"): Promise<T> {
   for (let attempt = 0; ; attempt++) {
-    await waitForRateLimitSlot();
+    await waitForRateLimitSlot(priority);
     const token = await getAccessToken();
     const res = await fetch(`${config.piwik.baseUrl}${pathAndQuery}`, {
       ...init,
@@ -217,10 +230,11 @@ interface QueryRow {
   [key: string]: QueryValue;
 }
 
-async function queryAnalytics(body: Record<string, unknown>): Promise<QueryRow[]> {
+async function queryAnalytics(body: Record<string, unknown>, priority: "normal" | "bulk" = "normal"): Promise<QueryRow[]> {
   const res = await piwikFetch<{ meta: { columns: string[] }; data: QueryValue[][] }>(
     "/api/analytics/v1/query",
-    { method: "POST", body: JSON.stringify(body) }
+    { method: "POST", body: JSON.stringify(body) },
+    priority
   );
   return res.data.map((row) => {
     const record: QueryRow = {};
@@ -258,7 +272,9 @@ function splitIntoChunks(dateFrom: string, dateTo: string): Array<{ from: string
 async function queryAnalyticsRange(body: Record<string, unknown>, dateFrom: string, dateTo: string): Promise<QueryRow[]> {
   const chunks = splitIntoChunks(dateFrom, dateTo);
   const chunkResults = await Promise.all(
-    chunks.map((c) => queryAnalytics({ ...body, date_from: c.from, date_to: c.to }))
+    // "bulk" priority: see BULK_SHARE_OF_LIMIT -- this is the deep-backfill
+    // path, it must never be able to starve the daily cron/on-demand calls.
+    chunks.map((c) => queryAnalytics({ ...body, date_from: c.from, date_to: c.to }, "bulk"))
   );
   const rows = chunkResults.flat();
   if (rows.length > chunks.length * MAX_PLAUSIBLE_ROWS_PER_CHUNK) {
