@@ -137,12 +137,14 @@ body {
   inset: 0;
   z-index: 0;
   background-image: url("/header-banner-mkweb.png");
-  background-size: auto 100%;
+  background-size: auto 140%;
   background-position: right center;
   background-repeat: no-repeat;
   opacity: 0.96;
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 42%, black 62%, black 100%);
-  mask-image: linear-gradient(to right, transparent 0%, transparent 42%, black 62%, black 100%);
+  /* Fondu très progressif sur presque toute la largeur -- pas de bord net
+     perceptible côté gauche, contrairement à la transition resserrée d'avant. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 8%, rgba(0, 0, 0, 0.12) 30%, rgba(0, 0, 0, 0.4) 50%, rgba(0, 0, 0, 0.75) 70%, black 92%, black 100%);
+  mask-image: linear-gradient(to right, transparent 0%, transparent 8%, rgba(0, 0, 0, 0.12) 30%, rgba(0, 0, 0, 0.4) 50%, rgba(0, 0, 0, 0.75) 70%, black 92%, black 100%);
 }
 
 /*
@@ -199,6 +201,31 @@ body {
   display: flex;
   justify-content: flex-end;
   flex-shrink: 0;
+}
+
+/* En dessous de cette largeur, plus assez de place pour marque + sélecteurs
+   sur une même ligne -- on empile plutôt que de laisser déborder hors écran
+   (c'était le cas avant : sélecteurs coupés à droite, sous-titre écrasé en
+   une colonne d'un mot de large). */
+@media (max-width: 760px) {
+  .app-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .header-col-brand {
+    flex-basis: 100%;
+  }
+  .header-col-controls {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+  .header-controls,
+  .period-controls {
+    flex-wrap: wrap;
+  }
+  .app-header .subtitle {
+    max-width: none;
+  }
 }
 
 .app-header h1 {
@@ -363,6 +390,8 @@ body {
   gap: 4px;
   border-bottom: 1px solid var(--gridline);
   margin-bottom: 20px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab {
@@ -375,6 +404,8 @@ body {
   cursor: pointer;
   border-bottom: 2px solid transparent;
   font-family: inherit;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .tab.active {
