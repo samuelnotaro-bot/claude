@@ -50,7 +50,7 @@ export function Synthesis() {
 
   return (
     <div>
-      <HeroBanner image="/synthese.png" caption="Résumé, tendances et plan d'action" />
+      <HeroBanner image="/synthese.png" caption="Résumé, tendances et plan d'action" zoom="fit" />
       <div className="card">
         <h2 style={{ marginBottom: 4 }}>Synthèse — {periodLabel}</h2>
         <p className="card-subtitle" style={{ margin: 0 }}>

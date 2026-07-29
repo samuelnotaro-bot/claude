@@ -71,7 +71,7 @@ export function Sites() {
 
   return (
     <div>
-      <HeroBanner image="/details.png" caption="Détail par site" />
+      <HeroBanner image="/details.png" caption="Détail par site" zoom="fit" />
       <div className="card">
         <h2>Sites</h2>
         <p className="chart-note">

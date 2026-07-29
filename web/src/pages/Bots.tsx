@@ -19,7 +19,7 @@ export function Bots() {
 
   return (
     <div>
-      <HeroBanner image="/bots.png" caption="Analyse du trafic suspect" />
+      <HeroBanner image="/bots.png" caption="Analyse du trafic suspect" zoom="fit" />
       <div className="card">
         <h2>Détection de trafic bot</h2>
         <p className="card-subtitle" style={{ margin: "-6px 0 0" }}>

@@ -432,6 +432,13 @@ body {
   background-repeat: no-repeat;
 }
 
+/* See HeroBanner's zoom="fit" doc comment -- scales down instead of
+   cropping to fill, so a shorter-and-wider box doesn't eat half the image. */
+.hero-banner-photo--fit {
+  background-size: 88%;
+  background-color: var(--brand-c1-700);
+}
+
 @media (max-width: 640px) {
   .hero-banner { height: 110px; }
   .hero-banner-text { font-size: 14px; padding: 0 16px; flex-basis: 45%; }
