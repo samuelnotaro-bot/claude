@@ -180,7 +180,7 @@ export function Overview() {
 
   return (
     <div>
-      <HeroBanner image="/coeurs.png" caption="Trafic, conversion et KPIs clés" />
+      <HeroBanner image="/worldwide.png" caption="Trafic, conversion et KPIs clés" />
       <div className="period-banner">
         <p className="chart-note" style={{ margin: 0 }}>
           Période affichée : {periodLabel} — {deltaLabel}

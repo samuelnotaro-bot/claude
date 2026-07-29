@@ -33,7 +33,7 @@ export function Regions() {
 
   return (
     <div>
-      <HeroBanner image="/lundicatastrophe.png" caption="Performance par région" />
+      <HeroBanner image="/business-regions.png" caption="Performance par région" />
       <div className="card">
         <h2>Sessions par région business</h2>
         <RegionBarChart data={regions} />

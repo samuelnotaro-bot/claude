@@ -36,7 +36,7 @@ export function Localisation() {
 
   return (
     <div>
-      <HeroBanner image="/intrus.png" caption="Détection des anomalies géographiques" />
+      <HeroBanner image="/localisation.png" caption="Détection des anomalies géographiques" />
       <div className="card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
