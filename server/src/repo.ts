@@ -157,9 +157,19 @@ export async function getSnapshotsForSites(siteIds: string[], dateFrom: string, 
   return byId;
 }
 
+// Guards every date-aggregate query below against a malformed `date` value
+// (the column has no format constraint) -- an empty string or any other
+// non-YYYY-MM-DD value sorts before every real date, so a single stray row
+// like that would silently become the MIN() and corrupt every
+// earliest-date/gap calculation in the app. See piwik/client.ts's
+// dayBucketForRow for where such a row could have come from (fixed there
+// too, so this is defense in depth against whatever may already be in the
+// database from before that fix).
+const VALID_DATE_SQL = `date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`;
+
 /** Earliest date with any snapshot data at all -- used to tell "not enough history yet" apart from "data gap". */
 export async function getEarliestSnapshotDate(): Promise<string | null> {
-  const { rows } = await pool.query(`SELECT MIN(date) AS earliest FROM site_snapshots`);
+  const { rows } = await pool.query(`SELECT MIN(date) AS earliest FROM site_snapshots WHERE ${VALID_DATE_SQL}`);
   return rows[0]?.earliest ?? null;
 }
 
@@ -187,7 +197,7 @@ export async function getEarliestSnapshotDateBySite(siteIds: string[]): Promise<
   const byId = new Map<string, string | null>(siteIds.map((id) => [id, null]));
   if (siteIds.length === 0) return byId;
   const { rows } = await pool.query(
-    `SELECT site_id, MIN(date) AS earliest FROM site_snapshots WHERE site_id = ANY($1) AND sessions > 0 GROUP BY site_id`,
+    `SELECT site_id, MIN(date) AS earliest FROM site_snapshots WHERE site_id = ANY($1) AND sessions > 0 AND ${VALID_DATE_SQL} GROUP BY site_id`,
     [siteIds]
   );
   for (const r of rows) {
@@ -198,7 +208,7 @@ export async function getEarliestSnapshotDateBySite(siteIds: string[]): Promise<
 
 /** Most recent date with any snapshot data at all -- used at boot to catch up on days missed while asleep (see index.ts). */
 export async function getLatestSnapshotDate(): Promise<string | null> {
-  const { rows } = await pool.query(`SELECT MAX(date) AS latest FROM site_snapshots`);
+  const { rows } = await pool.query(`SELECT MAX(date) AS latest FROM site_snapshots WHERE ${VALID_DATE_SQL}`);
   return rows[0]?.latest ?? null;
 }
 

@@ -553,8 +553,33 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
   // exactly like getDailyMetrics does for a single quiet day.
   for (let d = dateFrom; d <= dateTo; d = addDaysIso(d, 1)) dayBucket(d);
 
+  // Lookup-only for actual API rows -- unlike dayBucket above (which creates
+  // on demand, correct for the pre-fill loop), a row whose day-dimension
+  // value is missing, malformed, or outside [dateFrom, dateTo] must be
+  // dropped, not silently bucketed under whatever extractDay(row) happened
+  // to return. This is not hypothetical: an aggregate/totals row without a
+  // real per-day breakdown extracts to "" (see extractDay), and dayBucket("")
+  // would create a brand-new bucket keyed by an empty string -- which then
+  // gets upserted to Postgres as a real row with date='' (site_snapshots.date
+  // has no format constraint), corrupting every MIN(date)/earliest-date
+  // query in the app (an empty string sorts before any real date). Skipping
+  // instead means the batch quietly loses that one row's contribution rather
+  // than writing corrupt data -- consistent with CLAUDE.md's data-integrity
+  // priority: an undercount for one query type on one range is far better
+  // than a poisoned date propagating through every history calculation.
+  let skippedRows = 0;
+  function dayBucketForRow(date: string): DayAccumulator | null {
+    const bucket = byDay.get(date);
+    if (!bucket) {
+      skippedRows++;
+      return null;
+    }
+    return bucket;
+  }
+
   for (const row of totalsRows) {
-    const bucket = dayBucket(extractDay(row));
+    const bucket = dayBucketForRow(extractDay(row));
+    if (!bucket) continue;
     bucket.sessions = Number(row[COLUMN_IDS.sessions] ?? 0);
     bucket.users = Number(row[COLUMN_IDS.users] ?? 0);
     bucket.pageviews = Number(row[COLUMN_IDS.pageviews] ?? 0);
@@ -562,13 +587,15 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     bucket.bounceRate = Number(row[COLUMN_IDS.bounceRate] ?? 0);
   }
   for (const row of channelRows) {
-    const bucket = dayBucket(extractDay(row));
+    const bucket = dayBucketForRow(extractDay(row));
+    if (!bucket) continue;
     const label = String(row[COLUMN_IDS.channelDimension] ?? "");
     const channel = CHANNEL_MAP[label] ?? "other";
     bucket.channels[channel] += Number(row[COLUMN_IDS.sessions] ?? 0);
   }
   for (const row of goalRows) {
-    const bucket = dayBucket(extractDay(row));
+    const bucket = dayBucketForRow(extractDay(row));
+    if (!bucket) continue;
     const value = row[COLUMN_IDS.goalDimension];
     const goalName = Array.isArray(value) ? value[1] : null;
     if (!goalName) continue;
@@ -578,27 +605,34 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     else if (category === "support") bucket.supportConversions += count;
   }
   for (const row of downloadRows) {
-    const bucket = dayBucket(extractDay(row));
+    const bucket = dayBucketForRow(extractDay(row));
+    if (!bucket) continue;
     bucket.downloads = Number(row[COLUMN_IDS.downloads] ?? 0);
   }
   for (const row of sourceRows) {
     const value = row[COLUMN_IDS.sourceDimension];
     const source = String(Array.isArray(value) ? value[1] ?? value[0] : value ?? "");
     if (!source || !isAiReferrerSource(source)) continue;
-    const bucket = dayBucket(extractDay(row));
+    const bucket = dayBucketForRow(extractDay(row));
+    if (!bucket) continue;
     bucket.aiReferralSessions += Number(row[COLUMN_IDS.sessions] ?? 0);
   }
   for (const row of bounceRows) {
-    const bucket = dayBucket(extractDay(row));
+    const bucket = dayBucketForRow(extractDay(row));
+    if (!bucket) continue;
     const label = String(row[COLUMN_IDS.channelDimension] ?? "");
     const count = Number(row[COLUMN_IDS.bounces] ?? 0);
     if (label === "organic") bucket.organicBounces += count;
     else if (label === "direct") bucket.directBounces += count;
   }
   for (const row of gscRows) {
-    const bucket = dayBucket(extractDay(row));
+    const bucket = dayBucketForRow(extractDay(row));
+    if (!bucket) continue;
     bucket.searchConsoleClicks = Number(row[COLUMN_IDS.searchConsoleClicks] ?? 0);
     bucket.searchConsoleImpressions = Number(row[COLUMN_IDS.searchConsoleImpressions] ?? 0);
+  }
+  if (skippedRows > 0) {
+    console.warn(`[piwik] range query for ${siteId} (${dateFrom}..${dateTo}): skipped ${skippedRows} row(s) with a missing/out-of-range day value instead of writing them under a corrupt date.`);
   }
 
   // Automatic ongoing guard, not a one-off manual test: verify the batched
@@ -610,6 +644,15 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
   // below) matters more than the extra Piwik Pro call costs: one call per
   // getMetricsRange invocation (once per site per range-fetch, not once per
   // chunk) is negligible next to the hundreds saved by batching at all.
+  //
+  // Tolerant, not exact: when dateTo is yesterday (e.g. a site with no prior
+  // data extends its whole range up to yesterday), Piwik Pro's own numbers
+  // can still be settling between the two back-to-back queries this check
+  // makes, a few seconds apart -- an exact-match requirement would throw on
+  // that harmless drift and block every range fetch for such a site, not
+  // just the genuinely distorted ones. A real scope-forcing bug (the thing
+  // this guards against) shows up as a large, systematic gap, not a
+  // handful of sessions -- so only flag a difference too big to be drift.
   const spotCheckDate = dateTo;
   const spotCheckBucket = byDay.get(spotCheckDate);
   if (spotCheckBucket) {
@@ -620,10 +663,11 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
       columns: [{ column_id: COLUMN_IDS.sessions }],
     });
     const referenceSessions = Number(reference?.[COLUMN_IDS.sessions] ?? 0);
-    if (referenceSessions !== spotCheckBucket.sessions) {
+    const tolerance = Math.max(5, referenceSessions * 0.1);
+    if (Math.abs(referenceSessions - spotCheckBucket.sessions) > tolerance) {
       throw new Error(
-        `[piwik] range query spot-check mismatch for ${siteId}/${spotCheckDate}: batched sessions=${spotCheckBucket.sessions} vs single-day sessions=${referenceSessions} -- ` +
-          `the day-dimension breakdown may be distorting session totals, refusing to write this range`
+        `[piwik] range query spot-check mismatch for ${siteId}/${spotCheckDate}: batched sessions=${spotCheckBucket.sessions} vs single-day sessions=${referenceSessions} ` +
+          `(tolerance ${Math.round(tolerance)}) -- the day-dimension breakdown may be distorting session totals, refusing to write this range`
       );
     }
   }
