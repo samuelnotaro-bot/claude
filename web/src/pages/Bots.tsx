@@ -11,8 +11,19 @@ export function Bots() {
   const { queryParams, compare, from, to } = usePeriod();
   const [signal, setSignal] = useState<BotSignal | null>(null);
 
+  // Re-fetches every 60s in addition to the initial load: history recovery
+  // (see server/src/autoRecovery.ts) now runs entirely in the background
+  // with no button click required, so without a periodic refresh the
+  // numbers on screen would stay frozen at whatever they were on mount, no
+  // matter how much progress the server makes. Errors are swallowed -- a
+  // single missed tick shouldn't clear an otherwise-good view.
   useEffect(() => {
-    api.bots(queryParams).then(setSignal);
+    function load() {
+      api.bots(queryParams).then(setSignal).catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, [queryParams]);
 
   const deltaLabel = periodComparisonLabel(compare);

@@ -17,15 +17,26 @@ export function Synthesis() {
   const [history, setHistory] = useState<SynthesisType[]>([]);
   const [generating, setGenerating] = useState(false);
 
+  // Re-fetches every 60s in addition to the initial load: history recovery
+  // (see server/src/autoRecovery.ts) now runs entirely in the background
+  // with no button click required, so without a periodic refresh the
+  // numbers on screen would stay frozen at whatever they were on mount, no
+  // matter how much progress the server makes. Errors are swallowed -- a
+  // single missed tick shouldn't clear an otherwise-good view.
   useEffect(() => {
-    api.periodSynthesis(queryParams).then(setPeriodSynthesis);
-    api.bots(queryParams).then(setBotSignal);
-    // Geo-mismatch is intentionally NOT re-checked live here: a check hits
-    // Piwik Pro directly and this app is bound by a strict per-minute rate
-    // limit (see config.ts) -- reuse the last stored check (see checkedAt
-    // below) instead of triggering one on every period change. Run a fresh
-    // check from the Localisation tab when needed.
-    api.geoMismatches().then(setGeoMismatches);
+    function load() {
+      api.periodSynthesis(queryParams).then(setPeriodSynthesis).catch(() => {});
+      api.bots(queryParams).then(setBotSignal).catch(() => {});
+      // Geo-mismatch is intentionally NOT re-checked live here: a check hits
+      // Piwik Pro directly and this app is bound by a strict per-minute rate
+      // limit (see config.ts) -- reuse the last stored check (see checkedAt
+      // below) instead of triggering one on every period change/tick. Run a
+      // fresh check from the Localisation tab when needed.
+      api.geoMismatches().then(setGeoMismatches).catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, [queryParams]);
 
   function loadHistory() {

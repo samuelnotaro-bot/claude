@@ -16,16 +16,35 @@ export function Regions() {
   const [selected, setSelected] = useState<string | null>(null);
   const [series, setSeries] = useState<DayPoint[]>([]);
 
+  // Re-fetches every 60s in addition to the initial load: history recovery
+  // (see server/src/autoRecovery.ts) now runs entirely in the background
+  // with no button click required, so without a periodic refresh the
+  // numbers on screen would stay frozen at whatever they were on mount, no
+  // matter how much progress the server makes. Errors are swallowed -- a
+  // single missed tick shouldn't clear an otherwise-good view.
   useEffect(() => {
-    api.regions(queryParams).then((data) => {
-      setRegions(data);
-      setSelected((current) => (current && data.some((r) => r.region === current) ? current : data[0]?.region ?? null));
-    });
+    function load() {
+      api
+        .regions(queryParams)
+        .then((data) => {
+          setRegions(data);
+          setSelected((current) => (current && data.some((r) => r.region === current) ? current : data[0]?.region ?? null));
+        })
+        .catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, [queryParams]);
 
   useEffect(() => {
     if (!selected) return;
-    api.series("region", selected, queryParams).then(setSeries);
+    function load() {
+      api.series("region", selected!, queryParams).then(setSeries).catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, [selected, queryParams]);
 
   const deltaLabel = periodComparisonLabel(compare);

@@ -17,11 +17,26 @@ export function Localisation() {
   // piwik/client.ts), so re-running it just from browsing periods would mean
   // waiting tens of seconds on every click. "Vérifier maintenant" runs it for
   // the currently selected period explicitly.
+  // Re-fetches every 60s in addition to the initial load -- cheap (a stored
+  // DB read, not a live Piwik Pro check, see the doc comment above), and
+  // picks up both the scheduler's own periodic geo-mismatch check
+  // (scheduler.ts) and history recovery (autoRecovery.ts) as they progress
+  // in the background, instead of leaving the page frozen at whatever was
+  // stored on mount. Errors are swallowed -- a single missed tick shouldn't
+  // clear an otherwise-good view.
   useEffect(() => {
-    api.geoMismatches().then((data) => {
-      setMismatches(data);
-      setLoaded(true);
-    });
+    function load() {
+      api
+        .geoMismatches()
+        .then((data) => {
+          setMismatches(data);
+          setLoaded(true);
+        })
+        .catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, []);
 
   async function handleCheck() {

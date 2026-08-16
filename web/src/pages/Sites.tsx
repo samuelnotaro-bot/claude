@@ -36,16 +36,35 @@ export function Sites() {
   const [sortKey, setSortKey] = useState<SortKey>("sessions");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
+  // Re-fetches every 60s in addition to the initial load: history recovery
+  // (see server/src/autoRecovery.ts) now runs entirely in the background
+  // with no button click required, so without a periodic refresh the
+  // numbers on screen would stay frozen at whatever they were on mount, no
+  // matter how much progress the server makes. Errors are swallowed -- a
+  // single missed tick shouldn't clear an otherwise-good view.
   useEffect(() => {
-    api.sitesSummary(queryParams).then((data) => {
-      setSites(data);
-      setSelected((current) => (current && data.find((s) => s.id === current.id)) || data[0] || null);
-    });
+    function load() {
+      api
+        .sitesSummary(queryParams)
+        .then((data) => {
+          setSites(data);
+          setSelected((current) => (current && data.find((s) => s.id === current.id)) || data[0] || null);
+        })
+        .catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, [queryParams]);
 
   useEffect(() => {
     if (!selected) return;
-    api.series("site", selected.id, queryParams).then(setSeries);
+    function load() {
+      api.series("site", selected!.id, queryParams).then(setSeries).catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, [selected, queryParams]);
 
   const sorted = useMemo(() => {
