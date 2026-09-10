@@ -128,23 +128,29 @@ body {
 /*
  * Photo confinée à un panneau à droite (pas de pleine largeur) : hauteur
  * calée sur celle du bandeau sans aucun recadrage vertical (zéro zoom, la
- * scène complète reste visible), fondu progressif vers le dégradé bleu côté
- * gauche via un masque plutôt qu'une coupe nette.
+ * scène complète reste visible). L'ancienne version fondait la photo via un
+ * masque dont les paliers étaient en % de la largeur totale du bandeau,
+ * alors que la photo (dimensionnée par sa hauteur, "auto 140%") ne démarre
+ * elle-même qu'à ~60% de cette largeur -- le masque commençait donc à
+ * s'estomper sur du vide, puis la photo apparaissait d'un coup, dès son
+ * propre bord gauche, à une opacité déjà élevée : une coupure nette malgré
+ * le masque. Un dégradé bleu (même teinte que le fond du bandeau) posé
+ * PAR-DESSUS la photo, sur toute la largeur, évite ce problème : peu importe
+ * où la photo commence réellement, le bleu la recouvre progressivement
+ * jusqu'à devenir transparent, donc la coupure ne peut plus être nette.
  */
 .brand-bar::after {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
-  background-image: url("/header-banner-mkweb.png");
-  background-size: auto 140%;
-  background-position: right center;
-  background-repeat: no-repeat;
+  background-image:
+    linear-gradient(90deg, var(--brand-c1-700) 0%, var(--brand-c1-700) 38%, color-mix(in srgb, var(--brand-c1-700) 55%, transparent) 58%, transparent 82%),
+    url("/header-banner-mkweb.png");
+  background-size: 100% 100%, auto 140%;
+  background-position: left center, right center;
+  background-repeat: no-repeat, no-repeat;
   opacity: 0.96;
-  /* Fondu très progressif sur presque toute la largeur -- pas de bord net
-     perceptible côté gauche, contrairement à la transition resserrée d'avant. */
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 8%, rgba(0, 0, 0, 0.12) 30%, rgba(0, 0, 0, 0.4) 50%, rgba(0, 0, 0, 0.75) 70%, black 92%, black 100%);
-  mask-image: linear-gradient(to right, transparent 0%, transparent 8%, rgba(0, 0, 0, 0.12) 30%, rgba(0, 0, 0, 0.4) 50%, rgba(0, 0, 0, 0.75) 70%, black 92%, black 100%);
 }
 
 /*
