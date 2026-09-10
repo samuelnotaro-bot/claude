@@ -904,10 +904,17 @@ const ROLLUP_SITE_DIMENSION_CANDIDATES = [
  * approximating with smaller wins (chunk size, merged queries). Read-only:
  * every probe here is a live query, nothing is written to the database.
  */
-export async function probeRollupSite(knownSiteIds: string[]): Promise<RollupProbeResult> {
+export async function probeRollupSite(knownSiteIds: string[], explicitSiteIds: string[] = []): Promise<RollupProbeResult> {
   const today = new Date().toISOString().slice(0, 10);
   const allApps = await listApps();
   const candidateApps = allApps.filter((a) => /all/i.test(a.name)).map((a) => ({ id: a.id, name: a.name, urls: a.urls }));
+  // A Roll-Up Reporting property doesn't necessarily show up in
+  // /api/apps/v2 (confirmed empty here) -- when the site owner supplies its
+  // ID directly (e.g. copied from the Piwik Pro UI), test it too, name
+  // unknown.
+  for (const id of explicitSiteIds) {
+    if (!candidateApps.some((a) => a.id === id)) candidateApps.push({ id, name: "(id fourni directement)", urls: [] });
+  }
 
   const multiSiteArrayTest: RollupProbeResult["multiSiteArrayTest"] = { attempted: false, ok: false };
   if (knownSiteIds.length >= 2) {

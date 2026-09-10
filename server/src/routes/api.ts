@@ -910,14 +910,19 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   // per site per query type? If either works, request volume for the
   // 26-month sync could drop by roughly the site count. Read-only, no data
   // written -- see piwik/client.ts#probeRollupSite for what each probe does.
-  app.get("/api/diagnostics/rollup-site", async (_req, reply) => {
+  app.get<{ Querystring: { siteId?: string } }>("/api/diagnostics/rollup-site", async (req, reply) => {
     if (config.mode !== "live") {
       return reply.code(400).send({ error: "Diagnostics only meaningful in PIWIK_MODE=live." });
     }
     const sites = await getSites();
     if (sites.length === 0) return reply.code(404).send({ error: "No tracked sites." });
+    // ?siteId=<id> (comma-separated for more than one) tests a specific
+    // Piwik Pro site id directly -- for a Roll-Up Reporting property that
+    // doesn't show up in the automatic /api/apps/v2 discovery (confirmed
+    // empty for this account) but whose id is known from the Piwik Pro UI.
+    const explicitSiteIds = (req.query.siteId ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     try {
-      return await probeRollupSite(sites.map((s) => s.id));
+      return await probeRollupSite(sites.map((s) => s.id), explicitSiteIds);
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
