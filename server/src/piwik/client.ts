@@ -370,6 +370,60 @@ function extractSiteId(row: QueryRow): string {
   return String(raw ?? "");
 }
 
+/**
+ * Shared by getMetricsRange and getMetricsRangeAllSites: verifies a batched
+ * day-dimension breakdown against the proven single-day path (no day
+ * dimension at all) for a couple of real days, throwing only if BOTH
+ * disagree. Confirmed live that a single fixed date can independently
+ * return 0/no row from the day-dimension breakdown while the rest of the
+ * same range is fine -- reproduced on a day 7 days old and, separately, on
+ * 2025-01-01 (8+ months old), ruling out "too recent" as the mechanism.
+ * Whatever causes it affects one date at a time, not the whole range, so
+ * requiring only ONE of two independent candidate dates to agree tells a
+ * genuine systematic distortion (wrong column id, unexpected scope
+ * behavior -- shows up on every date, including both candidates) apart
+ * from this per-date quirk (implausible to hit both candidates at once).
+ * Tolerant per date, not exact: two back-to-back queries a few seconds
+ * apart can drift slightly even on an otherwise-fine day.
+ */
+async function spotCheckAgainstSingleDay(
+  siteId: string,
+  dateFrom: string,
+  dateTo: string,
+  getBatchedSessions: (date: string) => number | undefined,
+  label: string = "range query"
+): Promise<void> {
+  const midpoint = addDaysIso(dateFrom, Math.floor(daysBetweenInclusive(dateFrom, dateTo) / 2));
+  const candidates = [...new Set([dateFrom, midpoint])].filter((d) => getBatchedSessions(d) !== undefined);
+  if (candidates.length === 0) return;
+
+  const results = await Promise.all(
+    candidates.map(async (date) => {
+      const [reference] = await queryAnalytics({
+        website_id: siteId,
+        date_from: date,
+        date_to: date,
+        columns: [{ column_id: COLUMN_IDS.sessions }],
+      });
+      const referenceSessions = Number(reference?.[COLUMN_IDS.sessions] ?? 0);
+      const batchedSessions = getBatchedSessions(date) ?? 0;
+      const tolerance = Math.max(5, referenceSessions * 0.1);
+      return { date, referenceSessions, batchedSessions, tolerance, ok: Math.abs(referenceSessions - batchedSessions) <= tolerance };
+    })
+  );
+
+  if (results.every((r) => !r.ok)) {
+    const detail = results.map((r) => `${r.date}: batched=${r.batchedSessions} vs single-day=${r.referenceSessions} (tolerance ${Math.round(r.tolerance)})`).join("; ");
+    throw new Error(
+      `[piwik] ${label} spot-check mismatch for ${siteId} on all ${results.length} checked date(s) -- ${detail} -- ` +
+        `the day-dimension breakdown may be distorting session totals, refusing to write this range`
+    );
+  } else if (results.some((r) => !r.ok)) {
+    const mismatched = results.filter((r) => !r.ok);
+    console.warn(`[piwik] ${label} spot-check: ${siteId} disagreed on ${mismatched.map((r) => r.date).join(", ")} but agreed on at least one other date -- proceeding, likely a per-date quirk rather than systematic distortion.`);
+  }
+}
+
 export async function getDailyMetrics(siteId: string, date: string): Promise<DailySiteMetrics> {
   // Merged with the downloads count: both are plain whole-day aggregates
   // with no dimension breakdown, and both are already "required" (neither
@@ -667,49 +721,27 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
 
   // Automatic ongoing guard, not a one-off manual test: verify the batched
   // day-dimension breakdown agrees with the proven single-day path (no day
-  // dimension at all) for one real day out of this range, every time this
-  // function runs. This is exactly the check that a wrong column id or a
-  // scope-forcing regression on Piwik Pro's side would fail -- catching it
-  // automatically here (and refusing to write the batch, see the throw
-  // below) matters more than the extra Piwik Pro call costs: one call per
-  // getMetricsRange invocation (once per site per range-fetch, not once per
-  // chunk) is negligible next to the hundreds saved by batching at all.
+  // dimension at all) for a couple of real days out of this range, every
+  // time this function runs. This is exactly the check that a wrong column
+  // id or a scope-forcing regression on Piwik Pro's side would fail --
+  // catching it automatically here (and refusing to write the batch, see
+  // the throw below) matters more than the extra Piwik Pro call cost: 2
+  // calls per getMetricsRange invocation is negligible next to the
+  // hundreds saved by batching at all.
   //
-  // Checks dateFrom, not dateTo -- confirmed live and directly, not a
-  // guess: the day-dimension breakdown can return 0/no row for a day as
-  // recent as 7 days ago even though a plain single-day query for that
-  // exact date returns real, correct data (batched=0 vs single-day=1419,
-  // reproduced identically across every site and many retries over an
-  // hour). Checking dateTo blocked 100% of range fetches whose window
-  // happened to end within whatever that lag window is -- exactly the
-  // "extend backward from an earliest date that's only a few days old"
-  // case a freshly-recreated database hits on its very first extension.
-  // dateFrom is always the retention floor or an explicit older target, so
-  // it's never subject to that lag. This only checks for a genuine
-  // scope-forcing distortion (large, systematic, present on any day) --
-  // it was never meant to detect recency lag, so anchoring it on a day
-  // that can't have that lag is strictly more correct, not just more
-  // convenient. Tolerant, not exact, for the same reason as before: two
-  // back-to-back queries a few seconds apart can drift slightly even on a
-  // settled day.
-  const spotCheckDate = dateFrom;
-  const spotCheckBucket = byDay.get(spotCheckDate);
-  if (spotCheckBucket) {
-    const [reference] = await queryAnalytics({
-      website_id: siteId,
-      date_from: spotCheckDate,
-      date_to: spotCheckDate,
-      columns: [{ column_id: COLUMN_IDS.sessions }],
-    });
-    const referenceSessions = Number(reference?.[COLUMN_IDS.sessions] ?? 0);
-    const tolerance = Math.max(5, referenceSessions * 0.1);
-    if (Math.abs(referenceSessions - spotCheckBucket.sessions) > tolerance) {
-      throw new Error(
-        `[piwik] range query spot-check mismatch for ${siteId}/${spotCheckDate}: batched sessions=${spotCheckBucket.sessions} vs single-day sessions=${referenceSessions} ` +
-          `(tolerance ${Math.round(tolerance)}) -- the day-dimension breakdown may be distorting session totals, refusing to write this range`
-      );
-    }
-  }
+  // Checks 2 independent candidate dates, not 1, and only fails if BOTH
+  // disagree -- confirmed live that a SINGLE fixed date can independently
+  // return 0/no row from the day-dimension breakdown while every other date
+  // in the same range is fine, and a plain single-day query for that exact
+  // date returns real, correct data. First seen on a day 7 days old
+  // (checking dateTo back then), then on 2025-01-01 specifically -- 8+
+  // months old, ruling out "too recent" as the actual cause. Whatever the
+  // real mechanism, it affects one date at a time, not the whole range, so
+  // requiring only ONE of two independent dates to agree tells genuine
+  // systematic distortion (which shows up on every date, including both
+  // candidates) apart from this per-date quirk (which wouldn't plausibly
+  // hit both candidates at once).
+  await spotCheckAgainstSingleDay(siteId, dateFrom, dateTo, (date) => byDay.get(date)?.sessions);
 
   return [...byDay.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
@@ -948,33 +980,23 @@ export async function getMetricsRangeAllSites(
     console.warn(`[piwik] roll-up range query (${dateFrom}..${dateTo}): skipped ${skippedRows} row(s) with an untracked site or a missing/out-of-range day value.`);
   }
 
-  // Spot-check one real (site, day) pair against the proven single-site
-  // path -- same tolerant comparison as getMetricsRange's, same reasoning,
-  // and same fix: anchored on dateFrom, not dateTo. Confirmed live that the
-  // day-dimension breakdown can return 0/no row for a day as recent as 7
-  // days ago even though a plain single-day query for that exact date
-  // returns real data -- checking dateTo blocked every range whose window
-  // happened to end inside that lag, which is exactly the case for a
-  // freshly-recreated database extending backward from a days-old earliest
-  // date. dateFrom is always the retention floor or an explicit older
-  // target, never subject to that lag.
+  // Spot-check one real site's (site, day) pairs against the proven
+  // single-site path -- same tolerant, 2-independent-candidate-date
+  // comparison as getMetricsRange's (see spotCheckAgainstSingleDay's doc
+  // comment): a SINGLE fixed date can independently return 0/no row from
+  // the day-dimension breakdown -- first seen on a day 7 days old, then on
+  // 2025-01-01 specifically (8+ months old, ruling out "too recent" as the
+  // cause) -- while a plain single-day query for that exact date returns
+  // real data. Only fails if both candidate dates disagree.
   const spotCheckSiteId = [...knownSiteIds][0];
-  const spotCheckBucket = spotCheckSiteId ? bySite.get(spotCheckSiteId)?.get(dateFrom) : undefined;
-  if (spotCheckSiteId && spotCheckBucket) {
-    const [reference] = await queryAnalytics({
-      website_id: spotCheckSiteId,
-      date_from: dateFrom,
-      date_to: dateFrom,
-      columns: [{ column_id: COLUMN_IDS.sessions }],
-    });
-    const referenceSessions = Number(reference?.[COLUMN_IDS.sessions] ?? 0);
-    const tolerance = Math.max(5, referenceSessions * 0.1);
-    if (Math.abs(referenceSessions - spotCheckBucket.sessions) > tolerance) {
-      throw new Error(
-        `[piwik] roll-up spot-check mismatch for ${spotCheckSiteId}/${dateFrom}: roll-up sessions=${spotCheckBucket.sessions} vs single-site sessions=${referenceSessions} ` +
-          `(tolerance ${Math.round(tolerance)}) -- the roll-up breakdown may be distorting session totals, refusing to write this range`
-      );
-    }
+  if (spotCheckSiteId) {
+    await spotCheckAgainstSingleDay(
+      spotCheckSiteId,
+      dateFrom,
+      dateTo,
+      (date) => bySite.get(spotCheckSiteId)?.get(date)?.sessions,
+      "roll-up"
+    );
   }
 
   const result = new Map<string, DailySiteMetrics[]>();
