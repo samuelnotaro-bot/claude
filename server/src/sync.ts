@@ -95,7 +95,12 @@ const MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK = 14;
 // path, skipping the batch attempt for exactly that slice).
 const BATCH_RECENCY_BUFFER_DAYS = 14;
 
-async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number; batchError?: string }> {
+async function syncSiteRange(
+  site: SiteRecord,
+  dateFrom: string,
+  dateTo: string,
+  maxRangeDaysForPerDayFallback: number = MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK
+): Promise<{ ok: number; failed: number; batchError?: string }> {
   try {
     const days = await fetchMetricsRange(site.id, dateFrom, dateTo);
     for (const day of days) await upsertSnapshot(day);
@@ -103,7 +108,7 @@ async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const rangeDays = daysBetweenInclusive(dateFrom, dateTo);
-    if (rangeDays > MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK) {
+    if (rangeDays > maxRangeDaysForPerDayFallback) {
       console.warn(`[sync] range batch failed for ${site.name} ${dateFrom}..${dateTo} (${rangeDays} days) -- too long to fall back per-day, reporting failure: ${message}`);
       return { ok: 0, failed: rangeDays, batchError: message };
     }
@@ -117,6 +122,48 @@ async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string)
     else failed++;
   }
   return { ok, failed };
+}
+
+// Extend-history's target range can span months (the deep-history
+// extension, unlike a typical gap-fill window) -- one bad date anywhere in
+// it would otherwise make syncSiteRange declare the WHOLE range failed
+// (its own per-day fallback only covers ranges up to
+// MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK, far smaller), retried from scratch
+// every run with the same all-or-nothing result forever. Chunking the
+// target into EXTEND_CHUNK_DAYS windows (see syncSiteRangeChunked)
+// contains a bad date to just its own chunk -- which, being passed as
+// syncSiteRange's own fallback threshold, still gets a proper per-day
+// recovery instead of being abandoned, so a site keeps making real,
+// permanent progress every run instead of re-failing its entire history
+// from the same starting point indefinitely.
+const EXTEND_CHUNK_DAYS = 90;
+
+/**
+ * Fetches [dateFrom, dateTo] for one site in EXTEND_CHUNK_DAYS windows,
+ * walking BACKWARD from dateTo (the end adjacent to the site's existing
+ * earliest known date) toward dateFrom, and stopping at the first chunk
+ * that isn't fully recovered -- never writes an older chunk past a failed
+ * one, so the site's earliest-known date always stays a true, contiguous
+ * boundary (no gap hidden underneath data that would otherwise look
+ * contiguous by MIN(date) alone). Whatever's left unattempted this run is
+ * naturally retried, from the same point, on the next
+ * extendHistoryToRetentionFloor pass.
+ */
+async function syncSiteRangeChunked(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number; batchError?: string }> {
+  let ok = 0;
+  let chunkTo = dateTo;
+  while (chunkTo >= dateFrom) {
+    const naturalChunkFrom = addDaysIso(chunkTo, -(EXTEND_CHUNK_DAYS - 1));
+    const chunkFrom = naturalChunkFrom > dateFrom ? naturalChunkFrom : dateFrom;
+    const result = await syncSiteRange(site, chunkFrom, chunkTo, EXTEND_CHUNK_DAYS);
+    if (result.failed > 0) {
+      const remaining = daysBetweenInclusive(dateFrom, chunkTo);
+      return { ok, failed: remaining, batchError: result.batchError };
+    }
+    ok += result.ok;
+    chunkTo = addDaysIso(chunkFrom, -1);
+  }
+  return { ok, failed: 0 };
 }
 
 /**
@@ -554,7 +601,7 @@ export async function extendHistoryToRetentionFloor(
   let latestDateTo = targets[0].dateTo;
   for (let i = 0; i < targets.length; i += CONCURRENCY) {
     const batch = targets.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(batch.map((t) => syncSiteRange(t.site, t.dateFrom, t.dateTo)));
+    const results = await Promise.all(batch.map((t) => syncSiteRangeChunked(t.site, t.dateFrom, t.dateTo)));
     for (let j = 0; j < results.length; j++) {
       const r = results[j];
       ok += r.ok;
