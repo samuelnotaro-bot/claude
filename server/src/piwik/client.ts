@@ -337,6 +337,11 @@ function extractDay(row: QueryRow): string {
 }
 
 export async function getDailyMetrics(siteId: string, date: string): Promise<DailySiteMetrics> {
+  // Merged with the downloads count: both are plain whole-day aggregates
+  // with no dimension breakdown, and both are already "required" (neither
+  // is wrapped in the try/catch pattern the 3 truly optional queries below
+  // use) -- so combining them into one call loses no failure-isolation that
+  // existed before, and cuts a call off every single day/site fetch.
   const [totals] = await queryAnalytics({
     website_id: siteId,
     date_from: date,
@@ -347,6 +352,7 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
       { column_id: COLUMN_IDS.pageviews },
       { column_id: COLUMN_IDS.goalConversions },
       { column_id: COLUMN_IDS.bounceRate },
+      { column_id: COLUMN_IDS.downloads },
     ],
   });
 
@@ -392,13 +398,6 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     else if (category === "support") supportConversions += count;
   }
 
-  const [downloadsTotal] = await queryAnalytics({
-    website_id: siteId,
-    date_from: date,
-    date_to: date,
-    columns: [{ column_id: COLUMN_IDS.downloads }],
-  });
-
   const [aiReferralSessions, organicBouncesAndDirect, searchConsole] = await Promise.all([
     fetchAiReferralSessions(siteId, date),
     fetchChannelBounces(siteId, date),
@@ -417,7 +416,7 @@ export async function getDailyMetrics(siteId: string, date: string): Promise<Dai
     channels,
     rfqConversions,
     supportConversions,
-    downloads: Number(downloadsTotal?.[COLUMN_IDS.downloads] ?? 0),
+    downloads: Number(totals?.[COLUMN_IDS.downloads] ?? 0),
     aiReferralSessions: aiReferralSessions.value,
     organicBounces: organicBouncesAndDirect.value.organic,
     directBounces: organicBouncesAndDirect.value.direct,
@@ -461,7 +460,17 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     }
   }
 
-  const [totalsRows, channelRows, goalRows, downloadRows, sourceRows, bounceRows, gscRows] = await Promise.all([
+  // 5 query types instead of 7: unlike getDailyMetrics, this function has no
+  // per-field failure isolation to begin with (all 7 were already combined
+  // into one Promise.all where any single failure throws and fails the whole
+  // range -- see the "Range mode has no way to isolate..." comment below), so
+  // merging queries that share the same dimension shape costs nothing here.
+  // downloads folds into totals (both plain whole-day aggregates); bounces
+  // folds into the channel breakdown (same channelDimension grouping) --
+  // cutting a meaningful fraction of the total request count on exactly the
+  // path most bound by Piwik Pro's per-minute rate limit (the 26-month
+  // extension).
+  const [totalsRows, channelRows, goalRows, sourceRows, gscRows] = await Promise.all([
     queryAnalyticsRange({
       website_id: siteId,
       columns: [
@@ -471,11 +480,17 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
         { column_id: COLUMN_IDS.pageviews },
         { column_id: COLUMN_IDS.goalConversions },
         { column_id: COLUMN_IDS.bounceRate },
+        { column_id: COLUMN_IDS.downloads },
       ],
     }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.sessions }],
+      columns: [
+        DAY_DIMENSION_COLUMN,
+        { column_id: COLUMN_IDS.channelDimension },
+        { column_id: COLUMN_IDS.sessions },
+        { column_id: COLUMN_IDS.bounces },
+      ],
     }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
@@ -483,15 +498,7 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
-      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.downloads }],
-    }, dateFrom, dateTo),
-    queryAnalyticsRange({
-      website_id: siteId,
       columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
-    }, dateFrom, dateTo),
-    queryAnalyticsRange({
-      website_id: siteId,
-      columns: [DAY_DIMENSION_COLUMN, { column_id: COLUMN_IDS.channelDimension }, { column_id: COLUMN_IDS.bounces }],
     }, dateFrom, dateTo),
     queryAnalyticsRange({
       website_id: siteId,
@@ -502,9 +509,7 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
   assertPlausible(totalsRows, "totals");
   assertPlausible(channelRows, "channels");
   assertPlausible(goalRows, "goals");
-  assertPlausible(downloadRows, "downloads");
   assertPlausible(sourceRows, "sources");
-  assertPlausible(bounceRows, "bounces");
   assertPlausible(gscRows, "search-console");
 
   interface DayAccumulator {
@@ -585,6 +590,7 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     bucket.pageviews = Number(row[COLUMN_IDS.pageviews] ?? 0);
     bucket.goalConversions = Number(row[COLUMN_IDS.goalConversions] ?? 0);
     bucket.bounceRate = Number(row[COLUMN_IDS.bounceRate] ?? 0);
+    bucket.downloads = Number(row[COLUMN_IDS.downloads] ?? 0);
   }
   for (const row of channelRows) {
     const bucket = dayBucketForRow(extractDay(row));
@@ -592,6 +598,9 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     const label = String(row[COLUMN_IDS.channelDimension] ?? "");
     const channel = CHANNEL_MAP[label] ?? "other";
     bucket.channels[channel] += Number(row[COLUMN_IDS.sessions] ?? 0);
+    const bounceCount = Number(row[COLUMN_IDS.bounces] ?? 0);
+    if (label === "organic") bucket.organicBounces += bounceCount;
+    else if (label === "direct") bucket.directBounces += bounceCount;
   }
   for (const row of goalRows) {
     const bucket = dayBucketForRow(extractDay(row));
@@ -604,11 +613,6 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     if (category === "rfq") bucket.rfqConversions += count;
     else if (category === "support") bucket.supportConversions += count;
   }
-  for (const row of downloadRows) {
-    const bucket = dayBucketForRow(extractDay(row));
-    if (!bucket) continue;
-    bucket.downloads = Number(row[COLUMN_IDS.downloads] ?? 0);
-  }
   for (const row of sourceRows) {
     const value = row[COLUMN_IDS.sourceDimension];
     const source = String(Array.isArray(value) ? value[1] ?? value[0] : value ?? "");
@@ -616,14 +620,6 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
     const bucket = dayBucketForRow(extractDay(row));
     if (!bucket) continue;
     bucket.aiReferralSessions += Number(row[COLUMN_IDS.sessions] ?? 0);
-  }
-  for (const row of bounceRows) {
-    const bucket = dayBucketForRow(extractDay(row));
-    if (!bucket) continue;
-    const label = String(row[COLUMN_IDS.channelDimension] ?? "");
-    const count = Number(row[COLUMN_IDS.bounces] ?? 0);
-    if (label === "organic") bucket.organicBounces += count;
-    else if (label === "direct") bucket.directBounces += count;
   }
   for (const row of gscRows) {
     const bucket = dayBucketForRow(extractDay(row));
