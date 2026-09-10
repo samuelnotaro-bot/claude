@@ -528,7 +528,18 @@ async function computeAllScopeFindings(
 }
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/health", async () => ({ ok: true, mode: config.mode }));
+  // Render sets RENDER_GIT_COMMIT on every deploy automatically -- exposing
+  // it here (short SHA, not a secret) is the fastest way to confirm whether
+  // a given production instance is actually running the code just pushed,
+  // rather than a stale/stuck deploy still serving an older commit (a real,
+  // repeated source of confusion this project has hit: e.g. a deploy stuck
+  // retrying on an old env var snapshot, or logs that read like a bug fix
+  // regressed when the fix simply hadn't been deployed yet).
+  app.get("/api/health", async () => ({
+    ok: true,
+    mode: config.mode,
+    commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null,
+  }));
 
   app.get("/api/backfill/status", async () => getBackfillStatus());
 
