@@ -136,7 +136,7 @@ async function syncSiteRange(
 // recovery instead of being abandoned, so a site keeps making real,
 // permanent progress every run instead of re-failing its entire history
 // from the same starting point indefinitely.
-const EXTEND_CHUNK_DAYS = 90;
+const EXTEND_CHUNK_DAYS = 30;
 
 /**
  * Fetches [dateFrom, dateTo] for one site in EXTEND_CHUNK_DAYS windows,
