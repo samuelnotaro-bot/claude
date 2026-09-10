@@ -400,10 +400,9 @@ body {
 
 /*
  * Bandeau deux panneaux façon socomec.fr : bloc bleu plein avec le texte à
- * gauche, photo nette et non délavée à droite -- coins nets (l'arrondi façon
- * "bulle" ne fait plus partie de la charte retenue). Un dégradé est posé
- * uniquement sur le bord gauche de la photo (voir .hero-banner-photo::before)
- * pour fondre la jonction avec le bloc texte au lieu d'une coupure nette.
+ * gauche, photo nette et non délavée à droite -- pas de dégradé posé sur la
+ * photo elle-même, coins nets (l'arrondi façon "bulle" ne fait plus partie de
+ * la charte retenue).
  */
 .hero-banner {
   display: flex;
@@ -427,22 +426,10 @@ body {
 }
 
 .hero-banner-photo {
-  position: relative;
   flex: 1;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-}
-
-/* Softens the seam where the solid text panel meets the photo -- a plain
-   side-by-side flex layout otherwise creates a hard vertical line between
-   the text panel's dark blue and the photo's own (much lighter) tones. */
-.hero-banner-photo::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, rgb(35, 44, 119) 0%, rgba(35, 44, 119, 0.55) 12%, rgba(35, 44, 119, 0) 35%);
-  pointer-events: none;
 }
 
 /* See HeroBanner's zoom="fit" doc comment -- scales down instead of
