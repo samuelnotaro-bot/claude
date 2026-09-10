@@ -675,15 +675,24 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
   // getMetricsRange invocation (once per site per range-fetch, not once per
   // chunk) is negligible next to the hundreds saved by batching at all.
   //
-  // Tolerant, not exact: when dateTo is yesterday (e.g. a site with no prior
-  // data extends its whole range up to yesterday), Piwik Pro's own numbers
-  // can still be settling between the two back-to-back queries this check
-  // makes, a few seconds apart -- an exact-match requirement would throw on
-  // that harmless drift and block every range fetch for such a site, not
-  // just the genuinely distorted ones. A real scope-forcing bug (the thing
-  // this guards against) shows up as a large, systematic gap, not a
-  // handful of sessions -- so only flag a difference too big to be drift.
-  const spotCheckDate = dateTo;
+  // Checks dateFrom, not dateTo -- confirmed live and directly, not a
+  // guess: the day-dimension breakdown can return 0/no row for a day as
+  // recent as 7 days ago even though a plain single-day query for that
+  // exact date returns real, correct data (batched=0 vs single-day=1419,
+  // reproduced identically across every site and many retries over an
+  // hour). Checking dateTo blocked 100% of range fetches whose window
+  // happened to end within whatever that lag window is -- exactly the
+  // "extend backward from an earliest date that's only a few days old"
+  // case a freshly-recreated database hits on its very first extension.
+  // dateFrom is always the retention floor or an explicit older target, so
+  // it's never subject to that lag. This only checks for a genuine
+  // scope-forcing distortion (large, systematic, present on any day) --
+  // it was never meant to detect recency lag, so anchoring it on a day
+  // that can't have that lag is strictly more correct, not just more
+  // convenient. Tolerant, not exact, for the same reason as before: two
+  // back-to-back queries a few seconds apart can drift slightly even on a
+  // settled day.
+  const spotCheckDate = dateFrom;
   const spotCheckBucket = byDay.get(spotCheckDate);
   if (spotCheckBucket) {
     const [reference] = await queryAnalytics({
@@ -940,23 +949,29 @@ export async function getMetricsRangeAllSites(
   }
 
   // Spot-check one real (site, day) pair against the proven single-site
-  // path -- same tolerant comparison as getMetricsRange's, same reasoning:
-  // catches a systematic distortion (wrong column id, unexpected scope
-  // behavior) without throwing on harmless real-time drift for a recent day.
+  // path -- same tolerant comparison as getMetricsRange's, same reasoning,
+  // and same fix: anchored on dateFrom, not dateTo. Confirmed live that the
+  // day-dimension breakdown can return 0/no row for a day as recent as 7
+  // days ago even though a plain single-day query for that exact date
+  // returns real data -- checking dateTo blocked every range whose window
+  // happened to end inside that lag, which is exactly the case for a
+  // freshly-recreated database extending backward from a days-old earliest
+  // date. dateFrom is always the retention floor or an explicit older
+  // target, never subject to that lag.
   const spotCheckSiteId = [...knownSiteIds][0];
-  const spotCheckBucket = spotCheckSiteId ? bySite.get(spotCheckSiteId)?.get(dateTo) : undefined;
+  const spotCheckBucket = spotCheckSiteId ? bySite.get(spotCheckSiteId)?.get(dateFrom) : undefined;
   if (spotCheckSiteId && spotCheckBucket) {
     const [reference] = await queryAnalytics({
       website_id: spotCheckSiteId,
-      date_from: dateTo,
-      date_to: dateTo,
+      date_from: dateFrom,
+      date_to: dateFrom,
       columns: [{ column_id: COLUMN_IDS.sessions }],
     });
     const referenceSessions = Number(reference?.[COLUMN_IDS.sessions] ?? 0);
     const tolerance = Math.max(5, referenceSessions * 0.1);
     if (Math.abs(referenceSessions - spotCheckBucket.sessions) > tolerance) {
       throw new Error(
-        `[piwik] roll-up spot-check mismatch for ${spotCheckSiteId}/${dateTo}: roll-up sessions=${spotCheckBucket.sessions} vs single-site sessions=${referenceSessions} ` +
+        `[piwik] roll-up spot-check mismatch for ${spotCheckSiteId}/${dateFrom}: roll-up sessions=${spotCheckBucket.sessions} vs single-site sessions=${referenceSessions} ` +
           `(tolerance ${Math.round(tolerance)}) -- the roll-up breakdown may be distorting session totals, refusing to write this range`
       );
     }

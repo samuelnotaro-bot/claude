@@ -449,12 +449,30 @@ export async function extendHistoryToRetentionFloor(
   const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
   const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
 
+  // Confirmed live and directly: Piwik Pro's day-dimension breakdown (used
+  // by both the per-site and roll-up batched paths) can return 0/no row for
+  // a day as recent as 7 days ago even though a plain single-day query for
+  // that exact date returns real, correct data. That's exactly the
+  // "extend backward from an earliest date that's only a few days old"
+  // case a freshly-recreated database hits on its very first extension --
+  // dateTo lands inside the lag window on every attempt, and the spot-check
+  // (rightly) refuses to write the range every single time, blocking all
+  // progress. Capping how recent the batched dateTo is allowed to be keeps
+  // it out of that lag window entirely; whatever small gap this leaves
+  // between the capped point and the site's actual earliest date is inside
+  // [siteEarliest, yesterday] once this extension succeeds, so the regular
+  // gap-fill scan (scanAndFillGaps, always per-day, never subject to this
+  // lag) picks it up automatically on its own next pass.
+  const BATCH_RECENCY_BUFFER_DAYS = 14;
+  const batchSafeDateTo = addDaysIso(today, -BATCH_RECENCY_BUFFER_DAYS);
+
   const targets = sites
     .map((site) => {
       const earliest = earliestBySite.get(site.id) ?? null;
       // No data at all yet for this site -> fetch the whole window, not just
       // "before" some earliest date that doesn't exist.
-      const dateTo = earliest ? addDaysIso(earliest, -1) : yesterday;
+      const naturalDateTo = earliest ? addDaysIso(earliest, -1) : yesterday;
+      const dateTo = naturalDateTo < batchSafeDateTo ? naturalDateTo : batchSafeDateTo;
       return { site, dateFrom: retentionFloor, dateTo };
     })
     .filter((t) => t.dateFrom <= t.dateTo); // already at (or past) the retention floor for this site
