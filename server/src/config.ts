@@ -37,6 +37,15 @@ export const config = {
   // gap-fill's scan and lets the UI tell "will never be available" apart
   // from "not synced yet, retry". 26 months * ~30.44 days/month ≈ 791 days.
   piwikDataRetentionDays: Number(env("PIWIK_DATA_RETENTION_DAYS", "791")),
+  // Business choice, not a platform limit: the account owner doesn't need
+  // history further back than this for analysis, and every day further
+  // back costs real sync time against Piwik Pro's rate limit for no
+  // benefit. Distinct from piwikDataRetentionDays above (what Piwik Pro
+  // *can* provide) -- see period.ts#effectiveHistoryFloor, which combines
+  // both into whichever is the more restrictive (later) date, so this can
+  // never accidentally ask for data older than Piwik Pro's own retention
+  // even if set earlier than that by mistake.
+  historyStartDate: process.env.HISTORY_START_DATE || "2025-01-01",
   // Optional: the website id of a Piwik Pro Roll-Up Reporting property that
   // aggregates every tracked country site. Confirmed live on this account:
   // querying it with the `website_name` dimension returns one row per real

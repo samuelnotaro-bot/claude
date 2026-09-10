@@ -45,6 +45,7 @@ import {
   pctChange,
   hasEnoughHistoryFor,
   addDaysIso,
+  effectiveHistoryFloor,
   type PeriodQuery,
 } from "../period.js";
 
@@ -95,7 +96,7 @@ async function loadCleanSeriesBySite(
 }> {
   const compareRange = resolveComparisonRange(period);
   const bulk = await getSnapshotsForSites(siteIds, compareRange.from, period.to);
-  const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
+  const retentionFloorDate = effectiveHistoryFloor();
 
   const currentBySite = new Map<string, DayPoint[]>();
   const compareBySite = new Map<string, DayPoint[]>();
@@ -465,7 +466,7 @@ async function computeAllScopeFindings(
   const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
   const compareRange = resolveComparisonRange(period);
   const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
-  const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
+  const retentionFloorDate = effectiveHistoryFloor();
   const retentionLimited = !historyOk && compareRange.from < retentionFloorDate;
 
   const { currentBySite, compareBySite } = await loadCleanSeriesBySite(sites.map((s) => s.id), period);
@@ -627,7 +628,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       const [sites, earliestDate] = await Promise.all([getSites(), getEarliestSnapshotDate()]);
       const compareRange = resolveComparisonRange(period);
       const historyOk = hasEnoughHistoryFor(compareRange.from, earliestDate);
-      const retentionFloorDate = addDaysIso(new Date().toISOString().slice(0, 10), -config.piwikDataRetentionDays);
+      const retentionFloorDate = effectiveHistoryFloor();
       const retentionLimited = !historyOk && compareRange.from < retentionFloorDate;
       const { currentBySite, compareBySite, flaggedInCurrentBySite, missingInCurrentBySite, missingOutOfRetentionInCurrentBySite } =
         await loadCleanSeriesBySite(sites.map((s) => s.id), period);

@@ -1,3 +1,5 @@
+import { config } from "./config.js";
+
 export type CompareMode = "previous_period" | "previous_year";
 
 export interface PeriodQuery {
@@ -33,6 +35,29 @@ export function daysBetweenInclusive(from: string, to: string): number {
   const a = new Date(from + "T00:00:00Z").getTime();
   const b = new Date(to + "T00:00:00Z").getTime();
   return Math.round((b - a) / 86_400_000) + 1;
+}
+
+/**
+ * The real, effective "we will never have data before this date" boundary
+ * -- whichever is the MORE RECENT (more restrictive) of two independent
+ * constraints: how far back Piwik Pro's own retention actually goes
+ * (config.piwikDataRetentionDays, a platform fact), and how far back the
+ * account owner actually wants this app to sync (config.historyStartDate,
+ * a business choice, e.g. "no need to go back into 2024"). Using the later
+ * of the two means a deliberately shorter historyStartDate genuinely
+ * shortens every sync/gap-fill/extend target (real time saved), while an
+ * historyStartDate mistakenly set earlier than Piwik Pro's retention can
+ * never make the app try to fetch data that was never going to exist.
+ *
+ * Single source of truth for this boundary -- used wherever "how far back
+ * should we ever try to sync, or tell the user comparisons are impossible
+ * beyond" needs an answer (sync.ts's extend/gap-fill targets, and
+ * routes/api.ts's retentionFloorDate/retentionLimited UI messaging).
+ */
+export function effectiveHistoryFloor(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
+  return retentionFloor > config.historyStartDate ? retentionFloor : config.historyStartDate;
 }
 
 /** Presets shown in the UI period selector (relative to today), in days. */

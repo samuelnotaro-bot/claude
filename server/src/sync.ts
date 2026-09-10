@@ -8,7 +8,7 @@ import {
 } from "./repo.js";
 import { fetchDailyMetrics, fetchMetricsRange, fetchMetricsRangeAllSites } from "./metrics.js";
 import { clearCache } from "./cache.js";
-import { addDaysIso, daysBetweenInclusive } from "./period.js";
+import { addDaysIso, daysBetweenInclusive, effectiveHistoryFloor } from "./period.js";
 import { config } from "./config.js";
 
 // Bounded concurrency across sites for a given day -- meaningfully faster than
@@ -219,7 +219,7 @@ async function scanAndFillGaps(): Promise<GapFillResult> {
   if (sitesWithHistory.length === 0) return empty;
 
   const yesterday = addDaysIso(today, -1);
-  const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
+  const retentionFloor = effectiveHistoryFloor();
   let overallEarliest = earliestBySite.get(sitesWithHistory[0].id)!;
   for (const site of sitesWithHistory) {
     const e = earliestBySite.get(site.id)!;
@@ -261,7 +261,7 @@ async function scanAndFillGaps(): Promise<GapFillResult> {
 
   if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention };
 
-  console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) within the ${config.piwikDataRetentionDays}-day retention window (+${outOfRetention} unfillable, out of retention); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
+  console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) back to ${retentionFloor} (+${outOfRetention} unfillable, before that floor); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
 
   // Round-robin across sites (one missing day at a time), not one site
   // drained before the next -- guarantees every site with a gap gets
@@ -446,7 +446,7 @@ export async function extendHistoryToRetentionFloor(
 
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = addDaysIso(today, -1);
-  const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
+  const retentionFloor = effectiveHistoryFloor();
   const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
 
   // Confirmed live and directly: Piwik Pro's day-dimension breakdown (used
@@ -554,7 +554,7 @@ export async function historyNeedsRecovery(): Promise<boolean> {
 
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = addDaysIso(today, -1);
-  const retentionFloor = addDaysIso(today, -config.piwikDataRetentionDays);
+  const retentionFloor = effectiveHistoryFloor();
 
   const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
   for (const site of sites) {
