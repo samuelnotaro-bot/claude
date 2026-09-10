@@ -37,6 +37,18 @@ export const config = {
   // gap-fill's scan and lets the UI tell "will never be available" apart
   // from "not synced yet, retry". 26 months * ~30.44 days/month ≈ 791 days.
   piwikDataRetentionDays: Number(env("PIWIK_DATA_RETENTION_DAYS", "791")),
+  // Optional: the website id of a Piwik Pro Roll-Up Reporting property that
+  // aggregates every tracked country site. Confirmed live on this account:
+  // querying it with the `website_name` dimension returns one row per real
+  // site (as a [siteId, hostname] tuple matching this app's own site ids
+  // exactly) alongside whatever metrics are requested -- so ONE query
+  // against this property returns every site's data at once, instead of one
+  // query per site. When set, the bulk history sync (see sync.ts) uses this
+  // path; when unset, it falls back to the proven per-site path (slower,
+  // ~20x more Piwik Pro requests for a 20-site account, but needs no special
+  // account feature). Not auto-discovered: this account's roll-up property
+  // doesn't appear in /api/apps/v2 at all, only in Analytics Query results.
+  piwikRollupSiteId: process.env.PIWIK_ROLLUP_SITE_ID || null,
   fetchCron: env("FETCH_CRON", "0 6 * * *"),
   synthesisCron: env("SYNTHESIS_CRON", "0 7 * * 1"),
   dashboard: {

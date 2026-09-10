@@ -26,6 +26,32 @@ export async function fetchMetricsRange(siteId: string, dateFrom: string, dateTo
   return dateRange(new Date(dateFrom), new Date(dateTo)).map((date) => generateDemoMetrics(siteId, date, now));
 }
 
+/**
+ * Same data as fetchMetricsRange, for every site in `siteIds` in one pass
+ * (see piwik/client.ts#getMetricsRangeAllSites) -- queries a Roll-Up
+ * Reporting property once per query type/chunk instead of once per query
+ * type/chunk/site, when config.piwikRollupSiteId is configured. Demo mode
+ * has no roll-up concept, so it just generates each site's data locally
+ * and groups it the same way, no batching concern either way.
+ */
+export async function fetchMetricsRangeAllSites(
+  rollupSiteId: string,
+  dateFrom: string,
+  dateTo: string,
+  siteIds: Set<string>
+): Promise<Map<string, DailySiteMetrics[]>> {
+  if (config.mode === "live") {
+    return piwik.getMetricsRangeAllSites(rollupSiteId, dateFrom, dateTo, siteIds);
+  }
+  const now = new Date();
+  const dates = dateRange(new Date(dateFrom), new Date(dateTo));
+  const result = new Map<string, DailySiteMetrics[]>();
+  for (const siteId of siteIds) {
+    result.set(siteId, dates.map((date) => generateDemoMetrics(siteId, date, now)));
+  }
+  return result;
+}
+
 export async function fetchCountryChannelBreakdown(siteId: string, dateFrom: string, dateTo: string): Promise<CountryChannelRow[]> {
   if (config.mode === "live") {
     return piwik.getCountryChannelBreakdown(siteId, dateFrom, dateTo);

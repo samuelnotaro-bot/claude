@@ -56,6 +56,14 @@ const COLUMN_IDS = {
 
 const DAY_DIMENSION_COLUMN = { column_id: COLUMN_IDS.dayDimension, transformation_id: "to_date" };
 
+// Confirmed live against this org's Roll-Up Reporting property (see
+// config.ts#piwikRollupSiteId): `website_name` returns one row per real
+// site, as a [siteId, hostname] tuple -- the siteId matches this app's own
+// site ids exactly, verbatim. Used only against the roll-up property, never
+// against a normal per-site query (a real site has no "which site" to
+// break down by).
+const WEBSITE_NAME_COLUMN = { column_id: "website_name" };
+
 // Real `medium` values observed on this organization's traffic; anything else
 // (datasheet, notice, multisupports, application, packaging, product, ...) falls
 // back to "other".
@@ -308,19 +316,25 @@ const MAX_PLAUSIBLE_ROWS_PER_CHUNK = 3600;
 // rate limiter, not concurrency.
 const CHUNK_CONCURRENCY = 3;
 
-function splitIntoChunks(dateFrom: string, dateTo: string): Array<{ from: string; to: string }> {
+function splitIntoChunks(dateFrom: string, dateTo: string, chunkDays: number = RANGE_CHUNK_DAYS): Array<{ from: string; to: string }> {
   const chunks: Array<{ from: string; to: string }> = [];
   let from = dateFrom;
   while (from <= dateTo) {
-    const to = addDaysIso(from, RANGE_CHUNK_DAYS - 1);
+    const to = addDaysIso(from, chunkDays - 1);
     chunks.push({ from, to: to > dateTo ? dateTo : to });
     from = addDaysIso(to, 1);
   }
   return chunks;
 }
 
-async function queryAnalyticsRange(body: Record<string, unknown>, dateFrom: string, dateTo: string): Promise<QueryRow[]> {
-  const chunks = splitIntoChunks(dateFrom, dateTo);
+async function queryAnalyticsRange(
+  body: Record<string, unknown>,
+  dateFrom: string,
+  dateTo: string,
+  chunkDays: number = RANGE_CHUNK_DAYS,
+  maxRowsPerChunk: number = MAX_PLAUSIBLE_ROWS_PER_CHUNK
+): Promise<QueryRow[]> {
+  const chunks = splitIntoChunks(dateFrom, dateTo, chunkDays);
   const rows: QueryRow[] = [];
   for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
     const batch = chunks.slice(i, i + CHUNK_CONCURRENCY);
@@ -331,9 +345,9 @@ async function queryAnalyticsRange(body: Record<string, unknown>, dateFrom: stri
     );
     for (const r of batchResults) rows.push(...r);
   }
-  if (rows.length > chunks.length * MAX_PLAUSIBLE_ROWS_PER_CHUNK) {
+  if (rows.length > chunks.length * maxRowsPerChunk) {
     throw new Error(
-      `[piwik] range query returned ${rows.length} rows across ${chunks.length} chunk(s) of ${RANGE_CHUNK_DAYS} days -- ` +
+      `[piwik] range query returned ${rows.length} rows across ${chunks.length} chunk(s) of ${chunkDays} days -- ` +
         `a single chunk is exceeding the plausible row count, likely hitting an unconfirmed per-request row limit`
     );
   }
@@ -346,6 +360,14 @@ function extractDay(row: QueryRow): string {
   // Robust to either a pure "YYYY-MM-DD" or a full "YYYY-MM-DDTHH:mm:ssZ" --
   // the first 10 characters are the calendar day either way.
   return String(raw ?? "").slice(0, 10);
+}
+
+// `website_name`'s tuple is [siteId, hostname] (confirmed live) -- the id,
+// not the label, is what this app keys everything by.
+function extractSiteId(row: QueryRow): string {
+  const value = row[WEBSITE_NAME_COLUMN.column_id];
+  const raw = Array.isArray(value) ? value[0] : value;
+  return String(raw ?? "");
 }
 
 export async function getDailyMetrics(siteId: string, date: string): Promise<DailySiteMetrics> {
@@ -706,6 +728,268 @@ export async function getMetricsRange(siteId: string, dateFrom: string, dateTo: 
       searchConsoleClicks: bucket.searchConsoleClicks,
       searchConsoleImpressions: bucket.searchConsoleImpressions,
     }));
+}
+
+// A day x site x (channel/goal/source) breakdown against the roll-up
+// property is far denser per request than the same breakdown against one
+// real site -- every row now multiplies by however many sites the roll-up
+// covers. A smaller chunk keeps each request's row count in the same
+// ballpark as what the per-site path already handles reliably, while still
+// needing far fewer total requests than querying every site separately
+// (chunks x query-types x 1 roll-up property, instead of x however many
+// sites).
+const ROLLUP_RANGE_CHUNK_DAYS = 30;
+
+/**
+ * Same data as getMetricsRange, but for EVERY known site in one pass:
+ * queries the Roll-Up Reporting property (see config.ts#piwikRollupSiteId)
+ * once per query type/chunk instead of once per query type/chunk/site --
+ * cutting Piwik Pro request volume for the 26-month sync by roughly the
+ * site count (confirmed live: 24 sites on one `website_name` breakdown
+ * query, ~20x fewer requests than the per-site path for this account).
+ *
+ * `knownSiteIds` is the allowlist of this app's actually-tracked sites
+ * (see repo.ts#getSites) -- the roll-up property can include properties
+ * this app doesn't track (test sites, tool subdomains already excluded by
+ * siteScope.ts, ...), and a row for any id not in that allowlist is
+ * dropped rather than written, same reasoning as dayBucketForRow below for
+ * a malformed date: better to silently under-cover an out-of-scope id than
+ * write a snapshot row for a site this app has no record of and no
+ * business tracking.
+ *
+ * Every safety net from getMetricsRange applies here too, scaled for the
+ * extra site dimension: assertPlausible's row-count ceiling multiplies by
+ * site count, and the spot-check compares one real (site, day) pair
+ * against the proven single-site getDailyMetrics path. Throws (never
+ * returns partial/guessed data) if anything looks wrong; the caller (see
+ * sync.ts) falls back to the per-site path.
+ */
+export async function getMetricsRangeAllSites(
+  rollupSiteId: string,
+  dateFrom: string,
+  dateTo: string,
+  knownSiteIds: Set<string>
+): Promise<Map<string, DailySiteMetrics[]>> {
+  const expectedDays = daysBetweenInclusive(dateFrom, dateTo);
+  const maxPlausibleRows = expectedDays * 40 * Math.max(knownSiteIds.size, 1) + 500;
+
+  function assertPlausible(rows: QueryRow[], label: string): void {
+    if (rows.length > maxPlausibleRows) {
+      throw new Error(
+        `[piwik] roll-up range query "${label}" returned ${rows.length} rows for ${expectedDays} day(s) x ${knownSiteIds.size} site(s) -- ` +
+          `far more than plausible for a day+site-bucketed breakdown, dayDimension or website_name column id is probably wrong`
+      );
+    }
+  }
+
+  const rangeArgs = [dateFrom, dateTo, ROLLUP_RANGE_CHUNK_DAYS, maxPlausibleRows] as const;
+  const [totalsRows, channelRows, goalRows, sourceRows, gscRows] = await Promise.all([
+    queryAnalyticsRange({
+      website_id: rollupSiteId,
+      columns: [
+        DAY_DIMENSION_COLUMN,
+        WEBSITE_NAME_COLUMN,
+        { column_id: COLUMN_IDS.sessions },
+        { column_id: COLUMN_IDS.users },
+        { column_id: COLUMN_IDS.pageviews },
+        { column_id: COLUMN_IDS.goalConversions },
+        { column_id: COLUMN_IDS.bounceRate },
+        { column_id: COLUMN_IDS.downloads },
+      ],
+    }, ...rangeArgs),
+    queryAnalyticsRange({
+      website_id: rollupSiteId,
+      columns: [
+        DAY_DIMENSION_COLUMN,
+        WEBSITE_NAME_COLUMN,
+        { column_id: COLUMN_IDS.channelDimension },
+        { column_id: COLUMN_IDS.sessions },
+        { column_id: COLUMN_IDS.bounces },
+      ],
+    }, ...rangeArgs),
+    queryAnalyticsRange({
+      website_id: rollupSiteId,
+      columns: [DAY_DIMENSION_COLUMN, WEBSITE_NAME_COLUMN, { column_id: COLUMN_IDS.goalDimension }, { column_id: COLUMN_IDS.goalConversions }],
+    }, ...rangeArgs),
+    queryAnalyticsRange({
+      website_id: rollupSiteId,
+      columns: [DAY_DIMENSION_COLUMN, WEBSITE_NAME_COLUMN, { column_id: COLUMN_IDS.sourceDimension }, { column_id: COLUMN_IDS.sessions }],
+    }, ...rangeArgs),
+    queryAnalyticsRange({
+      website_id: rollupSiteId,
+      columns: [DAY_DIMENSION_COLUMN, WEBSITE_NAME_COLUMN, { column_id: COLUMN_IDS.searchConsoleClicks }, { column_id: COLUMN_IDS.searchConsoleImpressions }],
+    }, ...rangeArgs),
+  ]);
+
+  assertPlausible(totalsRows, "totals");
+  assertPlausible(channelRows, "channels");
+  assertPlausible(goalRows, "goals");
+  assertPlausible(sourceRows, "sources");
+  assertPlausible(gscRows, "search-console");
+
+  interface DayAccumulator {
+    sessions: number;
+    users: number;
+    pageviews: number;
+    goalConversions: number;
+    bounceRate: number;
+    channels: Record<Channel, number>;
+    rfqConversions: number;
+    supportConversions: number;
+    downloads: number;
+    aiReferralSessions: number;
+    organicBounces: number;
+    directBounces: number;
+    searchConsoleClicks: number;
+    searchConsoleImpressions: number;
+  }
+
+  // siteId -> date -> accumulator, pre-filled for every (known site, date)
+  // pair so a quiet day still gets a real zero-filled entry.
+  const bySite = new Map<string, Map<string, DayAccumulator>>();
+  function emptyAccumulator(): DayAccumulator {
+    return {
+      sessions: 0,
+      users: 0,
+      pageviews: 0,
+      goalConversions: 0,
+      bounceRate: 0,
+      channels: { organic: 0, direct: 0, referral: 0, paid: 0, social: 0, email: 0, other: 0 },
+      rfqConversions: 0,
+      supportConversions: 0,
+      downloads: 0,
+      aiReferralSessions: 0,
+      organicBounces: 0,
+      directBounces: 0,
+      searchConsoleClicks: 0,
+      searchConsoleImpressions: 0,
+    };
+  }
+  for (const siteId of knownSiteIds) {
+    const byDay = new Map<string, DayAccumulator>();
+    for (let d = dateFrom; d <= dateTo; d = addDaysIso(d, 1)) byDay.set(d, emptyAccumulator());
+    bySite.set(siteId, byDay);
+  }
+
+  // Lookup-only, like getMetricsRange's dayBucketForRow -- a row whose site
+  // id isn't tracked, or whose day is missing/malformed/out-of-range, is
+  // dropped rather than bucketed under a value that was never validated.
+  let skippedRows = 0;
+  function bucketForRow(row: QueryRow): DayAccumulator | null {
+    const siteId = extractSiteId(row);
+    const byDay = bySite.get(siteId);
+    if (!byDay) {
+      skippedRows++;
+      return null;
+    }
+    const bucket = byDay.get(extractDay(row));
+    if (!bucket) {
+      skippedRows++;
+      return null;
+    }
+    return bucket;
+  }
+
+  for (const row of totalsRows) {
+    const bucket = bucketForRow(row);
+    if (!bucket) continue;
+    bucket.sessions = Number(row[COLUMN_IDS.sessions] ?? 0);
+    bucket.users = Number(row[COLUMN_IDS.users] ?? 0);
+    bucket.pageviews = Number(row[COLUMN_IDS.pageviews] ?? 0);
+    bucket.goalConversions = Number(row[COLUMN_IDS.goalConversions] ?? 0);
+    bucket.bounceRate = Number(row[COLUMN_IDS.bounceRate] ?? 0);
+    bucket.downloads = Number(row[COLUMN_IDS.downloads] ?? 0);
+  }
+  for (const row of channelRows) {
+    const bucket = bucketForRow(row);
+    if (!bucket) continue;
+    const label = String(row[COLUMN_IDS.channelDimension] ?? "");
+    const channel = CHANNEL_MAP[label] ?? "other";
+    bucket.channels[channel] += Number(row[COLUMN_IDS.sessions] ?? 0);
+    const bounceCount = Number(row[COLUMN_IDS.bounces] ?? 0);
+    if (label === "organic") bucket.organicBounces += bounceCount;
+    else if (label === "direct") bucket.directBounces += bounceCount;
+  }
+  for (const row of goalRows) {
+    const bucket = bucketForRow(row);
+    if (!bucket) continue;
+    const value = row[COLUMN_IDS.goalDimension];
+    const goalName = Array.isArray(value) ? value[1] : null;
+    if (!goalName) continue;
+    const category = categorizeGoal(goalName);
+    const count = Number(row[COLUMN_IDS.goalConversions] ?? 0);
+    if (category === "rfq") bucket.rfqConversions += count;
+    else if (category === "support") bucket.supportConversions += count;
+  }
+  for (const row of sourceRows) {
+    const value = row[COLUMN_IDS.sourceDimension];
+    const source = String(Array.isArray(value) ? value[1] ?? value[0] : value ?? "");
+    if (!source || !isAiReferrerSource(source)) continue;
+    const bucket = bucketForRow(row);
+    if (!bucket) continue;
+    bucket.aiReferralSessions += Number(row[COLUMN_IDS.sessions] ?? 0);
+  }
+  for (const row of gscRows) {
+    const bucket = bucketForRow(row);
+    if (!bucket) continue;
+    bucket.searchConsoleClicks = Number(row[COLUMN_IDS.searchConsoleClicks] ?? 0);
+    bucket.searchConsoleImpressions = Number(row[COLUMN_IDS.searchConsoleImpressions] ?? 0);
+  }
+  if (skippedRows > 0) {
+    console.warn(`[piwik] roll-up range query (${dateFrom}..${dateTo}): skipped ${skippedRows} row(s) with an untracked site or a missing/out-of-range day value.`);
+  }
+
+  // Spot-check one real (site, day) pair against the proven single-site
+  // path -- same tolerant comparison as getMetricsRange's, same reasoning:
+  // catches a systematic distortion (wrong column id, unexpected scope
+  // behavior) without throwing on harmless real-time drift for a recent day.
+  const spotCheckSiteId = [...knownSiteIds][0];
+  const spotCheckBucket = spotCheckSiteId ? bySite.get(spotCheckSiteId)?.get(dateTo) : undefined;
+  if (spotCheckSiteId && spotCheckBucket) {
+    const [reference] = await queryAnalytics({
+      website_id: spotCheckSiteId,
+      date_from: dateTo,
+      date_to: dateTo,
+      columns: [{ column_id: COLUMN_IDS.sessions }],
+    });
+    const referenceSessions = Number(reference?.[COLUMN_IDS.sessions] ?? 0);
+    const tolerance = Math.max(5, referenceSessions * 0.1);
+    if (Math.abs(referenceSessions - spotCheckBucket.sessions) > tolerance) {
+      throw new Error(
+        `[piwik] roll-up spot-check mismatch for ${spotCheckSiteId}/${dateTo}: roll-up sessions=${spotCheckBucket.sessions} vs single-site sessions=${referenceSessions} ` +
+          `(tolerance ${Math.round(tolerance)}) -- the roll-up breakdown may be distorting session totals, refusing to write this range`
+      );
+    }
+  }
+
+  const result = new Map<string, DailySiteMetrics[]>();
+  for (const [siteId, byDay] of bySite) {
+    result.set(
+      siteId,
+      [...byDay.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, bucket]) => ({
+          siteId,
+          date,
+          sessions: bucket.sessions,
+          users: bucket.users,
+          pageviews: bucket.pageviews,
+          goalConversions: bucket.goalConversions,
+          bounceRate: bucket.bounceRate,
+          avgSessionDurationSec: 0,
+          channels: bucket.channels,
+          rfqConversions: bucket.rfqConversions,
+          supportConversions: bucket.supportConversions,
+          downloads: bucket.downloads,
+          aiReferralSessions: bucket.aiReferralSessions,
+          organicBounces: bucket.organicBounces,
+          directBounces: bucket.directBounces,
+          searchConsoleClicks: bucket.searchConsoleClicks,
+          searchConsoleImpressions: bucket.searchConsoleImpressions,
+        }))
+    );
+  }
+  return result;
 }
 
 interface ProbeResult<T> {

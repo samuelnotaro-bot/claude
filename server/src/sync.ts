@@ -6,7 +6,7 @@ import {
   getZeroSessionDatesBySite,
   type SiteRecord,
 } from "./repo.js";
-import { fetchDailyMetrics, fetchMetricsRange } from "./metrics.js";
+import { fetchDailyMetrics, fetchMetricsRange, fetchMetricsRangeAllSites } from "./metrics.js";
 import { clearCache } from "./cache.js";
 import { addDaysIso, daysBetweenInclusive } from "./period.js";
 import { config } from "./config.js";
@@ -389,6 +389,54 @@ export interface ExtendHistoryResult {
  * backfill` manually, so this is exposed as POST /api/data/deep-backfill
  * (same dashboard auth as everything else) to be triggered from the UI.
  */
+/**
+ * Fast path for extendHistoryToRetentionFloor: one bulk fetch covering
+ * every site's target window at once via the Roll-Up Reporting property
+ * (see config.ts#piwikRollupSiteId, piwik/client.ts#getMetricsRangeAllSites)
+ * instead of one fetch per site. Only active when a roll-up site id is
+ * configured; returns null (signalling "not attempted, use the per-site
+ * path instead") when it isn't, or when anything about the bulk fetch goes
+ * wrong -- the safety nets inside getMetricsRangeAllSites already throw on
+ * anything implausible, so a thrown error here just means "fall back",
+ * exactly like syncSiteRange's existing batched-vs-per-day fallback.
+ *
+ * Writes only each site's own [dateFrom, dateTo] slice of the bulk result,
+ * not the whole fetched window -- keeps the actual database effect
+ * identical to what the per-site path would have written, just fetched
+ * far more cheaply.
+ */
+async function extendHistoryViaRollup(
+  targets: Array<{ site: SiteRecord; dateFrom: string; dateTo: string }>,
+  retentionFloor: string,
+  yesterday: string,
+  onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
+): Promise<{ ok: number; failed: number } | null> {
+  if (!config.piwikRollupSiteId) return null;
+  try {
+    const knownSiteIds = new Set(targets.map((t) => t.site.id));
+    const bySite = await fetchMetricsRangeAllSites(config.piwikRollupSiteId, retentionFloor, yesterday, knownSiteIds);
+    let ok = 0;
+    let failed = 0;
+    let done = 0;
+    for (const t of targets) {
+      const days = bySite.get(t.site.id) ?? [];
+      const inWindow = days.filter((d) => d.date >= t.dateFrom && d.date <= t.dateTo);
+      for (const day of inWindow) await upsertSnapshot(day);
+      ok += inWindow.length;
+      const expected = daysBetweenInclusive(t.dateFrom, t.dateTo);
+      failed += Math.max(0, expected - inWindow.length);
+      done++;
+      onSiteProgress?.(done, targets.length);
+    }
+    clearCache();
+    console.log(`[sync] history extension via roll-up done: ${ok} (site, day) pair(s) filled across ${targets.length} site(s), ${failed} missing/failed.`);
+    return { ok, failed };
+  } catch (err) {
+    console.warn(`[sync] roll-up history extension failed, falling back to the per-site path: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 export async function extendHistoryToRetentionFloor(
   onSiteProgress?: (sitesDone: number, sitesTotal: number) => void
 ): Promise<ExtendHistoryResult> {
@@ -420,6 +468,20 @@ export async function extendHistoryToRetentionFloor(
   // looks like the run "shrank" or stalled rather than simply reporting the
   // true, smaller amount of work.
   onSiteProgress?.(0, targets.length);
+
+  const rollupResult = await extendHistoryViaRollup(targets, retentionFloor, yesterday, onSiteProgress);
+  if (rollupResult) {
+    const latestDateTo = targets.reduce((max, t) => (t.dateTo > max ? t.dateTo : max), targets[0].dateTo);
+    return {
+      extended: true,
+      dateFrom: retentionFloor,
+      dateTo: latestDateTo,
+      daysAdded: daysBetweenInclusive(retentionFloor, latestDateTo),
+      sitesExtended: targets.length,
+      ok: rollupResult.ok,
+      failed: rollupResult.failed,
+    };
+  }
 
   let ok = 0;
   let failed = 0;

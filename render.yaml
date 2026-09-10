@@ -34,6 +34,13 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      # Optional -- website id of a Piwik Pro Roll-Up Reporting property that
+      # aggregates every tracked site (see server/src/config.ts). When set,
+      # the 26-month history sync queries this one property instead of every
+      # site individually (~20x fewer Piwik Pro requests on this account).
+      # Safe to leave unset: falls back to the per-site path automatically.
+      - key: PIWIK_ROLLUP_SITE_ID
+        sync: false
       - key: FETCH_CRON
         value: "0 6 * * *"
       - key: SYNTHESIS_CRON
