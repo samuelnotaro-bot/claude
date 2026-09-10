@@ -133,15 +133,17 @@ export async function syncDateRange(
   return { ok, failed, batchError };
 }
 
-// Upper bound on how many (site, day) fetches a single gap-fill run performs.
-// Each fill makes ~6 Piwik Pro calls (totals, channels, goals, downloads,
-// AI-referral, bounces, Search Console), all paced through the same
-// per-minute rate limit (see piwik/client.ts) -- at the default 60/min that's
-// roughly 10 fills/minute, so 25 keeps a single run (boot, or the "Combler
-// les trous" button click) to a couple of minutes instead of tying up the
-// request for as long as a big gap would otherwise take. A large gap just
-// keeps closing further on each subsequent run.
-const MAX_GAP_FILLS_PER_RUN = 25;
+// Upper bound on how many days of Piwik Pro range-fetching a single gap-fill
+// run performs, summed across every site it touches. Each site's missing
+// days are fetched in ONE batched range request set (~5-7 Piwik Pro calls
+// total, see syncSiteRange/getMetricsRange -- same proven path the initial
+// backfill uses), covering that site's [oldest missing day, newest missing
+// day] in one shot instead of one request set PER missing day. That's what
+// makes closing a gap in, say, the last 30 days fast: ~5-7 calls per site
+// instead of up to ~180 (30 days x ~6 calls/day on the old per-day path). A
+// gap wider than this budget just keeps closing further on each subsequent
+// run, same as before.
+const MAX_GAP_FILL_SPAN_DAYS_PER_RUN = 400;
 
 export interface GapFillResult {
   sitesWithGaps: number;
@@ -195,7 +197,7 @@ async function forceResyncRecentDays(): Promise<{ ok: number; failed: number }> 
  * ("no data from July 1 to 19") and quietly wrecks period-over-period
  * comparisons (a window with a hole in it is not a fair comparison).
  *
- * Caps itself at MAX_GAP_FILLS_PER_RUN (site, day) pairs -- see
+ * Caps itself at MAX_GAP_FILL_SPAN_DAYS_PER_RUN days of range-fetching -- see
  * runGapFillLoop below for the multi-round wrapper that closes a gap larger
  * than that in one background job instead of requiring several manual
  * clicks.
@@ -261,33 +263,42 @@ async function scanAndFillGaps(): Promise<GapFillResult> {
 
   if (totalMissing === 0) return { ...empty, daysOutOfRetention: outOfRetention };
 
-  console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) back to ${retentionFloor} (+${outOfRetention} unfillable, before that floor); filling up to ${MAX_GAP_FILLS_PER_RUN} now...`);
+  console.log(`[sync] found ${totalMissing} missing (site, day) pair(s) across ${missingBySite.size} site(s) back to ${retentionFloor} (+${outOfRetention} unfillable, before that floor); filling now...`);
 
-  // Round-robin across sites (one missing day at a time), not one site
-  // drained before the next -- guarantees every site with a gap gets
-  // touched this run instead of the whole budget going to whichever site
-  // happens to be first and have the largest backlog.
+  // One batched range fetch per site -- covers that site's [oldest missing
+  // day, newest missing day] in a single request set via the same proven
+  // batched path the initial backfill uses (syncSiteRange, which falls back
+  // to per-day fetches itself if the batch fails on a short-enough span, see
+  // MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK) -- not one request set PER missing
+  // day like before. Smallest span first, not one site drained before the
+  // next, so a run closes as many sites' gaps completely as it can within
+  // MAX_GAP_FILL_SPAN_DAYS_PER_RUN before spending the budget on whichever
+  // site has the largest backlog.
   const siteById = new Map(sites.map((s) => [s.id, s]));
-  const siteIdsWithGaps = [...missingBySite.keys()];
-  const cursors = new Map<string, number>(siteIdsWithGaps.map((id) => [id, 0]));
+  const siteIdsWithGaps = [...missingBySite.keys()].sort(
+    (a, b) => missingBySite.get(a)!.length - missingBySite.get(b)!.length
+  );
+
   let filled = 0;
   let failed = 0;
-  let attempted = 0;
-  let progressed = true;
-  while (attempted < MAX_GAP_FILLS_PER_RUN && progressed) {
-    progressed = false;
-    for (const siteId of siteIdsWithGaps) {
-      if (attempted >= MAX_GAP_FILLS_PER_RUN) break;
-      const missing = missingBySite.get(siteId)!;
-      const cursor = cursors.get(siteId)!;
-      if (cursor >= missing.length) continue;
-      progressed = true;
-      attempted++;
-      cursors.set(siteId, cursor + 1);
-      const result = await syncSiteDate(siteById.get(siteId)!, missing[cursor]);
-      if (result.ok) filled++;
-      else failed++;
-    }
+  let spanDaysUsed = 0;
+  for (const siteId of siteIdsWithGaps) {
+    if (spanDaysUsed >= MAX_GAP_FILL_SPAN_DAYS_PER_RUN) break;
+    const missing = missingBySite.get(siteId)!;
+    const spanFrom = missing[0];
+    const spanTo = missing[missing.length - 1];
+    spanDaysUsed += daysBetweenInclusive(spanFrom, spanTo);
+    const result = await syncSiteRange(siteById.get(siteId)!, spanFrom, spanTo);
+    // syncSiteRange (re)fetches every day in [spanFrom, spanTo], not just
+    // the missing subset -- idempotent (upsertSnapshot overwrites) and far
+    // cheaper as one batched call than as separate per-day fetches, even
+    // counting the already-correct days it re-touches. Its summary can't
+    // tell which specific missing days within the span succeeded vs failed,
+    // so any failure counts the whole site's missing set as still open --
+    // the next scan re-checks real presence and only retries what's
+    // genuinely still missing.
+    if (result.failed === 0) filled += missing.length;
+    else failed += missing.length;
   }
 
   if (filled > 0) clearCache();
@@ -313,8 +324,8 @@ export async function backfillGaps(): Promise<GapFillResult> {
   };
 }
 
-// scanAndFillGaps caps itself to MAX_GAP_FILLS_PER_RUN per call (keeps a
-// single call fast/rate-limit-friendly), so closing a large multi-day,
+// scanAndFillGaps caps itself to MAX_GAP_FILL_SPAN_DAYS_PER_RUN per call
+// (keeps a single call fast/rate-limit-friendly), so closing a large multi-day,
 // multi-site outage needs several calls in a row. Asking a human to keep
 // clicking a button every couple of minutes until a counter hits zero is
 // exactly the kind of manual repetition CLAUDE.md says to avoid when it can
