@@ -78,6 +78,23 @@ export async function syncDay(date: string): Promise<{ ok: number; failed: numbe
 // ongoing automatic guard, not a one-off manual test.
 const MAX_RANGE_DAYS_FOR_PER_DAY_FALLBACK = 14;
 
+// Confirmed live and repeatedly, across many sites and runs, not a one-off:
+// Piwik Pro's day-dimension breakdown (used by every batched/roll-up path)
+// consistently returns 0/no row for dates within roughly the last week,
+// even though a plain single-day query (no day dimension) for that exact
+// date returns real, correct data. Unlike the rarer, unrelated-to-recency
+// per-date quirk the spot-check's 2-candidate check exists to tolerate (see
+// piwik/client.ts#spotCheckAgainstSingleDay), this one is predictable
+// enough to just avoid outright: any batched fetch whose window reaches
+// into the last BATCH_RECENCY_BUFFER_DAYS days is near-certain to have the
+// spot-check correctly refuse it (both candidate dates would likely land in
+// the lag window at once) -- attempting it anyway only costs a doomed
+// request before falling back. Used by both extendHistoryToRetentionFloor
+// (caps how recent a batched dateTo may be) and scanAndFillGaps (routes the
+// trailing recent slice of a site's missing days straight to the per-day
+// path, skipping the batch attempt for exactly that slice).
+const BATCH_RECENCY_BUFFER_DAYS = 14;
+
 async function syncSiteRange(site: SiteRecord, dateFrom: string, dateTo: string): Promise<{ ok: number; failed: number; batchError?: string }> {
   try {
     const days = await fetchMetricsRange(site.id, dateFrom, dateTo);
@@ -274,10 +291,19 @@ async function scanAndFillGaps(): Promise<GapFillResult> {
   // next, so a run closes as many sites' gaps completely as it can within
   // MAX_GAP_FILL_SPAN_DAYS_PER_RUN before spending the budget on whichever
   // site has the largest backlog.
+  //
+  // The trailing slice of each site's missing days that falls within
+  // BATCH_RECENCY_BUFFER_DAYS of today is routed straight to the per-day
+  // path instead, skipping the batch attempt for just that slice --
+  // confirmed live and repeatedly (not a guess) that a batch reaching into
+  // that recent a window fails its spot-check on both checked dates at
+  // once almost every time, so attempting it first only costs a doomed
+  // request+fallback instead of going straight to what would happen anyway.
   const siteById = new Map(sites.map((s) => [s.id, s]));
   const siteIdsWithGaps = [...missingBySite.keys()].sort(
     (a, b) => missingBySite.get(a)!.length - missingBySite.get(b)!.length
   );
+  const recencyCutoff = addDaysIso(today, -BATCH_RECENCY_BUFFER_DAYS);
 
   let filled = 0;
   let failed = 0;
@@ -285,20 +311,34 @@ async function scanAndFillGaps(): Promise<GapFillResult> {
   for (const siteId of siteIdsWithGaps) {
     if (spanDaysUsed >= MAX_GAP_FILL_SPAN_DAYS_PER_RUN) break;
     const missing = missingBySite.get(siteId)!;
-    const spanFrom = missing[0];
-    const spanTo = missing[missing.length - 1];
-    spanDaysUsed += daysBetweenInclusive(spanFrom, spanTo);
-    const result = await syncSiteRange(siteById.get(siteId)!, spanFrom, spanTo);
-    // syncSiteRange (re)fetches every day in [spanFrom, spanTo], not just
-    // the missing subset -- idempotent (upsertSnapshot overwrites) and far
-    // cheaper as one batched call than as separate per-day fetches, even
-    // counting the already-correct days it re-touches. Its summary can't
-    // tell which specific missing days within the span succeeded vs failed,
-    // so any failure counts the whole site's missing set as still open --
-    // the next scan re-checks real presence and only retries what's
-    // genuinely still missing.
-    if (result.failed === 0) filled += missing.length;
-    else failed += missing.length;
+    const site = siteById.get(siteId)!;
+    const batchable = missing.filter((d) => d <= recencyCutoff);
+    const tooRecent = missing.filter((d) => d > recencyCutoff);
+
+    let siteFailed = 0;
+    if (batchable.length > 0) {
+      const spanFrom = batchable[0];
+      const spanTo = batchable[batchable.length - 1];
+      spanDaysUsed += daysBetweenInclusive(spanFrom, spanTo);
+      const result = await syncSiteRange(site, spanFrom, spanTo);
+      // syncSiteRange (re)fetches every day in [spanFrom, spanTo], not just
+      // the missing subset -- idempotent (upsertSnapshot overwrites) and far
+      // cheaper as one batched call than as separate per-day fetches, even
+      // counting the already-correct days it re-touches. Its summary can't
+      // tell which specific missing days within the span succeeded vs
+      // failed, so any failure counts the whole batchable subset as still
+      // open -- the next scan re-checks real presence and only retries
+      // what's genuinely still missing.
+      if (result.failed > 0) siteFailed += batchable.length;
+    }
+    for (const date of tooRecent) {
+      const result = await syncSiteDate(site, date);
+      if (!result.ok) siteFailed++;
+    }
+    spanDaysUsed += tooRecent.length;
+
+    filled += missing.length - siteFailed;
+    failed += siteFailed;
   }
 
   if (filled > 0) clearCache();
@@ -460,21 +500,16 @@ export async function extendHistoryToRetentionFloor(
   const retentionFloor = effectiveHistoryFloor();
   const earliestBySite = await getEarliestSnapshotDateBySite(sites.map((s) => s.id));
 
-  // Confirmed live and directly: Piwik Pro's day-dimension breakdown (used
-  // by both the per-site and roll-up batched paths) can return 0/no row for
-  // a day as recent as 7 days ago even though a plain single-day query for
-  // that exact date returns real, correct data. That's exactly the
-  // "extend backward from an earliest date that's only a few days old"
+  // Caps how recent the batched dateTo is allowed to be -- see
+  // BATCH_RECENCY_BUFFER_DAYS's doc comment above for why. That's exactly
+  // the "extend backward from an earliest date that's only a few days old"
   // case a freshly-recreated database hits on its very first extension --
-  // dateTo lands inside the lag window on every attempt, and the spot-check
-  // (rightly) refuses to write the range every single time, blocking all
-  // progress. Capping how recent the batched dateTo is allowed to be keeps
-  // it out of that lag window entirely; whatever small gap this leaves
-  // between the capped point and the site's actual earliest date is inside
-  // [siteEarliest, yesterday] once this extension succeeds, so the regular
-  // gap-fill scan (scanAndFillGaps, always per-day, never subject to this
-  // lag) picks it up automatically on its own next pass.
-  const BATCH_RECENCY_BUFFER_DAYS = 14;
+  // dateTo would otherwise land inside the lag window on every attempt, and
+  // the spot-check (rightly) refuses to write the range every single time,
+  // blocking all progress. Whatever small gap this cap leaves between it
+  // and the site's actual earliest date is inside [siteEarliest, yesterday]
+  // once this extension succeeds, so scanAndFillGaps picks it up
+  // automatically on its own next pass (using the same buffer itself now).
   const batchSafeDateTo = addDaysIso(today, -BATCH_RECENCY_BUFFER_DAYS);
 
   const targets = sites
