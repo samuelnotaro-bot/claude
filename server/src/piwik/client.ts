@@ -859,3 +859,90 @@ export async function getCountryChannelBreakdown(siteId: string, dateFrom: strin
     })
     .filter((c) => c.country);
 }
+
+export interface RollupProbeResult {
+  // Every Piwik Pro app whose name contains "all" (case-insensitive) --
+  // candidates for a Roll-Up Reporting meta-property that aggregates every
+  // country site. Unfiltered by siteScope.ts on purpose: a roll-up property
+  // has no real per-country domain, so the normal site-discovery scope
+  // filter would silently exclude it.
+  candidateApps: Array<{ id: string; name: string; urls: string[] }>;
+  // Whether the query endpoint accepts an ARRAY of website_id values in one
+  // call (would let the app fetch several real sites' data in a single
+  // request, no roll-up property needed at all) -- tried against 2 real
+  // known site ids.
+  multiSiteArrayTest: { attempted: boolean; ok: boolean; error?: string; rowCount?: number; sampleRow?: unknown };
+  // For each candidate roll-up app, tries a list of plausible "which
+  // original site did this row come from" dimension column ids -- there's
+  // no documentation to go on here (this account has no test/sandbox
+  // access), so this is deliberately an empirical probe: real success/error
+  // per guess, not a guess baked into production code.
+  rollupDimensionProbes: Array<{ appId: string; appName: string; columnId: string; ok: boolean; error?: string; rowCount?: number; sampleRows?: QueryRow[] }>;
+}
+
+const ROLLUP_SITE_DIMENSION_CANDIDATES = [
+  "website_id",
+  "site_id",
+  "app_id",
+  "website",
+  "site",
+  "origin_website_id",
+  "source_website_id",
+  "data_source_website_id",
+  "website_name",
+];
+
+/**
+ * One-shot empirical probe run from a diagnostics route (see
+ * routes/api.ts#/api/diagnostics/rollup-site) to answer a specific question
+ * raised directly: can the app query ONE Piwik Pro property (either a
+ * multi-site array in a normal query, or a Roll-Up Reporting meta-property)
+ * and get every country's data back broken down by origin site, instead of
+ * one request per site per query type? If either works, it could cut Piwik
+ * Pro request volume by roughly the site count (~20x) -- the real fix for
+ * "26-month sync is too slow" this whole optimization pass has been
+ * approximating with smaller wins (chunk size, merged queries). Read-only:
+ * every probe here is a live query, nothing is written to the database.
+ */
+export async function probeRollupSite(knownSiteIds: string[]): Promise<RollupProbeResult> {
+  const today = new Date().toISOString().slice(0, 10);
+  const allApps = await listApps();
+  const candidateApps = allApps.filter((a) => /all/i.test(a.name)).map((a) => ({ id: a.id, name: a.name, urls: a.urls }));
+
+  const multiSiteArrayTest: RollupProbeResult["multiSiteArrayTest"] = { attempted: false, ok: false };
+  if (knownSiteIds.length >= 2) {
+    multiSiteArrayTest.attempted = true;
+    try {
+      const rows = await queryAnalytics({
+        website_id: knownSiteIds.slice(0, 2),
+        date_from: today,
+        date_to: today,
+        columns: [{ column_id: COLUMN_IDS.sessions }],
+      });
+      multiSiteArrayTest.ok = true;
+      multiSiteArrayTest.rowCount = rows.length;
+      multiSiteArrayTest.sampleRow = rows[0];
+    } catch (err) {
+      multiSiteArrayTest.error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  const rollupDimensionProbes: RollupProbeResult["rollupDimensionProbes"] = [];
+  for (const app of candidateApps) {
+    for (const columnId of ROLLUP_SITE_DIMENSION_CANDIDATES) {
+      try {
+        const rows = await queryAnalytics({
+          website_id: app.id,
+          date_from: today,
+          date_to: today,
+          columns: [{ column_id: columnId }, { column_id: COLUMN_IDS.sessions }],
+        });
+        rollupDimensionProbes.push({ appId: app.id, appName: app.name, columnId, ok: true, rowCount: rows.length, sampleRows: rows.slice(0, 5) });
+      } catch (err) {
+        rollupDimensionProbes.push({ appId: app.id, appName: app.name, columnId, ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+
+  return { candidateApps, multiSiteArrayTest, rollupDimensionProbes };
+}

@@ -34,7 +34,7 @@ import {
   finishDeepBackfillStatus,
 } from "../deepBackfillStatus.js";
 import { getGapFillStatus, startGapFillStatus, updateGapFillProgress, finishGapFillStatus } from "../gapFillStatus.js";
-import { probeOptionalMetrics, getDailyMetrics, getMetricsRange } from "../piwik/client.js";
+import { probeOptionalMetrics, getDailyMetrics, getMetricsRange, probeRollupSite } from "../piwik/client.js";
 import { getBackfillStatus } from "../backfillStatus.js";
 import { config } from "../config.js";
 import type { Continent } from "../continent.js";
@@ -898,6 +898,26 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         range: rangeDay ? { sessions: rangeDay.sessions, pageviews: rangeDay.pageviews, users: rangeDay.users } : null,
         sessionsMatch: rangeDay ? daily.sessions === rangeDay.sessions : false,
       };
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Answers a specific question raised directly: can the app query ONE
+  // Piwik Pro property (a multi-site array in a normal query, or a Roll-Up
+  // Reporting meta-property that aggregates every country site) and get
+  // every site's data back broken down by origin, instead of one request
+  // per site per query type? If either works, request volume for the
+  // 26-month sync could drop by roughly the site count. Read-only, no data
+  // written -- see piwik/client.ts#probeRollupSite for what each probe does.
+  app.get("/api/diagnostics/rollup-site", async (_req, reply) => {
+    if (config.mode !== "live") {
+      return reply.code(400).send({ error: "Diagnostics only meaningful in PIWIK_MODE=live." });
+    }
+    const sites = await getSites();
+    if (sites.length === 0) return reply.code(404).send({ error: "No tracked sites." });
+    try {
+      return await probeRollupSite(sites.map((s) => s.id));
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
