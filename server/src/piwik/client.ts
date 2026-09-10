@@ -284,14 +284,26 @@ async function queryAnalytics(body: Record<string, unknown>, priority: "normal" 
 // there). Rather than keep guessing at pagination, split the range into
 // short chunks up front -- each chunk's row count then stays comfortably
 // under any plausible single-page limit without needing pagination at all.
-const RANGE_CHUNK_DAYS = 45;
-const MAX_PLAUSIBLE_ROWS_PER_CHUNK = 1800;
+//
+// 90 days (doubled from an earlier, more conservative 45) -- the actual
+// bottleneck for the 26-month extension is total REQUEST COUNT against
+// Piwik Pro's 60/min hard limit, not per-request payload size, so halving
+// the chunk count directly halves how long a full extension takes. Not a
+// blind guess: this only widens the SAME chunking strategy that already
+// works (still well short of the single unchunked mega-range that caused
+// the original silent-truncation failure above), and MAX_PLAUSIBLE_ROWS_PER_CHUNK
+// below scales with it, so a chunk that's actually too big is caught by
+// assertPlausible (row-count sanity check) or the per-range spot-check in
+// getMetricsRange and safely falls back to per-day fetching for that one
+// site/range -- never silently wrong data, just slower for that one case.
+const RANGE_CHUNK_DAYS = 90;
+const MAX_PLAUSIBLE_ROWS_PER_CHUNK = 3600;
 // A handful of chunks in flight at once instead of one-at-a-time -- fully
 // sequential was a deliberate over-correction after ~950 simultaneously
 // pending requests (Promise.all over every chunk) looked like it was
 // crashing the process on a memory-constrained instance. A small cap keeps
-// peak concurrency an order of magnitude below that (5 sites x 7 query
-// types x 3 = ~105 max) while still overlapping network latency instead of
+// peak concurrency an order of magnitude below that (5 sites x 5 query
+// types x 3 = ~75 max) while still overlapping network latency instead of
 // paying it chunk by chunk -- the real bottleneck either way is the shared
 // rate limiter, not concurrency.
 const CHUNK_CONCURRENCY = 3;
